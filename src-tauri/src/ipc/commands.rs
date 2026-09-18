@@ -180,14 +180,6 @@ async fn execute_dispatch(
             services::symbols::handle(&action, &payload)
                 .map_err(|e| (ErrorCode::Internal, e))
         }
-        "graph" => {
-            services::graph::handle(&action, &payload, &state.db)
-                .map_err(|e| (ErrorCode::Internal, e))
-        }
-        "orchestrator" => {
-            services::orchestrator::handle(&action, &payload).await
-                .map_err(|e| (ErrorCode::Internal, e))
-        }
         "system" => {
             services::system::handle(&action, &payload, app).await
                 .map_err(|e| (ErrorCode::Internal, e))

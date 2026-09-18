@@ -18,6 +18,7 @@ pub async fn handle(app: &AppHandle, action: &str, payload: &serde_json::Value, 
             let command = payload.get("command").and_then(|v| v.as_str())
                 .ok_or("Missing 'command'")?;
             let approved = payload.get("approved").and_then(|v| v.as_bool()).unwrap_or(false);
+            let sandboxed = payload.get("sandboxed").and_then(|v| v.as_bool()).unwrap_or(false);
 
             let risk = classify_risk(command);
             match risk {
@@ -32,6 +33,26 @@ pub async fn handle(app: &AppHandle, action: &str, payload: &serde_json::Value, 
                     }
                 }
                 _ => {}
+            }
+
+            if sandboxed {
+                let _ = app.emit("terminal-output", serde_json::json!({ "text": format!("❯ [sandboxed] {}", command) }));
+                match crate::services::sandbox::run_in_sandbox(command, project_path) {
+                    Ok(out) => {
+                        for line in out.lines() {
+                            let _ = app.emit("terminal-output", serde_json::json!({ "text": line }));
+                        }
+                        return Ok(serde_json::json!({
+                            "output": out,
+                            "exit_code": 0,
+                            "sandboxed": true
+                        }));
+                    }
+                    Err(e) => {
+                        let _ = app.emit("terminal-output", serde_json::json!({ "text": format!("Sandbox execution error: {}", e) }));
+                        return Err(e);
+                    }
+                }
             }
 
             execute_command(app, project_path, command, process_handle).await

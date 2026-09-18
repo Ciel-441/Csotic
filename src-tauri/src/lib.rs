@@ -4,7 +4,6 @@ mod ollama;
 mod tools;
 mod db;
 mod events;
-pub mod agents;
 
 use std::sync::{Arc, Mutex};
 use tauri::Manager;

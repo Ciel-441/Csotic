@@ -97,28 +97,6 @@ pub fn query_dependencies(db: &std::sync::Mutex<Connection>, id: &str, project_i
     }
 }
 
-pub fn handle(action: &str, payload: &serde_json::Value, db: &std::sync::Mutex<Connection>) -> std::result::Result<serde_json::Value, String> {
-    match action {
-        "insert_node" => {
-            let node: Node = serde_json::from_value(payload.clone()).map_err(|e| e.to_string())?;
-            insert_node(db, &node).map_err(|e| e.to_string())?;
-            Ok(serde_json::json!({ "success": true }))
-        }
-        "insert_edge" => {
-            let edge: Edge = serde_json::from_value(payload.clone()).map_err(|e| e.to_string())?;
-            insert_edge(db, &edge).map_err(|e| e.to_string())?;
-            Ok(serde_json::json!({ "success": true }))
-        }
-        "query_deps" => {
-            let id = payload.get("id").and_then(|v| v.as_str()).ok_or("Missing id")?;
-            let project_id = payload.get("project_id").and_then(|v| v.as_str());
-            let deps = query_dependencies(db, id, project_id).map_err(|e| e.to_string())?;
-            serde_json::to_value(deps).map_err(|e| e.to_string())
-        }
-        _ => Err(format!("Unknown action: {}", action))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
