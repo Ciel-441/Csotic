@@ -18,7 +18,10 @@ pub struct Edge {
 }
 
 pub fn init_graph_db(db: &std::sync::Mutex<Connection>) -> Result<()> {
-    let conn = db.lock().unwrap();
+    let conn = match db.lock() {
+        Ok(c) => c,
+        Err(e) => e.into_inner(),
+    };
     conn.execute(
         "CREATE TABLE IF NOT EXISTS graph_nodes (
             id TEXT NOT NULL,
@@ -43,7 +46,10 @@ pub fn init_graph_db(db: &std::sync::Mutex<Connection>) -> Result<()> {
 }
 
 pub fn insert_node(db: &std::sync::Mutex<Connection>, node: &Node) -> Result<()> {
-    let conn = db.lock().unwrap();
+    let conn = match db.lock() {
+        Ok(c) => c,
+        Err(e) => e.into_inner(),
+    };
     let pid = node.project_id.as_deref().unwrap_or("global");
     conn.execute(
         "INSERT OR REPLACE INTO graph_nodes (id, project_id, kind, properties) VALUES (?1, ?2, ?3, ?4)",
@@ -53,7 +59,10 @@ pub fn insert_node(db: &std::sync::Mutex<Connection>, node: &Node) -> Result<()>
 }
 
 pub fn insert_edge(db: &std::sync::Mutex<Connection>, edge: &Edge) -> Result<()> {
-    let conn = db.lock().unwrap();
+    let conn = match db.lock() {
+        Ok(c) => c,
+        Err(e) => e.into_inner(),
+    };
     let pid = edge.project_id.as_deref().unwrap_or("global");
     conn.execute(
         "INSERT OR REPLACE INTO graph_edges (source, target, relationship, project_id) VALUES (?1, ?2, ?3, ?4)",
@@ -63,7 +72,10 @@ pub fn insert_edge(db: &std::sync::Mutex<Connection>, edge: &Edge) -> Result<()>
 }
 
 pub fn query_dependencies(db: &std::sync::Mutex<Connection>, id: &str, project_id: Option<&str>) -> Result<Vec<Edge>> {
-    let conn = db.lock().unwrap();
+    let conn = match db.lock() {
+        Ok(c) => c,
+        Err(e) => e.into_inner(),
+    };
     if let Some(pid) = project_id {
         let mut stmt = conn.prepare("SELECT source, target, project_id, relationship FROM graph_edges WHERE source = ?1 AND (project_id = ?2 OR project_id IS NULL)")?;
         let edges_iter = stmt.query_map(params![id, pid], |row| {

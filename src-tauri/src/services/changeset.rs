@@ -234,6 +234,13 @@ impl RollbackJournal {
         }
     }
 
+    fn lock_journals(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<RollbackRecord>>> {
+        match self.journals.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     pub fn record_original(
         &self,
         task_id: &str,
@@ -244,7 +251,7 @@ impl RollbackJournal {
         was_created: bool,
         db: Option<&Mutex<Connection>>,
     ) {
-        let mut guard = self.journals.lock().unwrap();
+        let mut guard = self.lock_journals();
         let list = guard.entry(task_id.to_string()).or_default();
         let seq = list.len();
         // Don't record if already recorded for this path (keep earliest before-state)
@@ -297,7 +304,7 @@ impl RollbackJournal {
     }
 
     pub fn record_applied_hash(&self, task_id: &str, path: &str, after_hash: &str, db: Option<&Mutex<Connection>>) {
-        let mut guard = self.journals.lock().unwrap();
+        let mut guard = self.lock_journals();
         if let Some(list) = guard.get_mut(task_id) {
             if let Some(record) = list.iter_mut().find(|r| r.path == path) {
                 record.hash_after_apply = Some(after_hash.to_string());
@@ -326,7 +333,7 @@ impl RollbackJournal {
         dest_content_before: Option<&str>,
         db: Option<&Mutex<Connection>>,
     ) {
-        let mut guard = self.journals.lock().unwrap();
+        let mut guard = self.lock_journals();
         let list = guard.entry(task_id.to_string()).or_default();
         let seq = list.len();
         let record = RollbackRecord {
@@ -377,7 +384,7 @@ impl RollbackJournal {
     /// Persist current in-memory records to SQLite DB changesets table
     pub fn persist_to_db(&self, db: &Mutex<Connection>, task_id: &str, project_id: Option<&str>) -> Result<(), String> {
         let records = {
-            let guard = self.journals.lock().unwrap();
+            let guard = self.lock_journals();
             guard.get(task_id).cloned().unwrap_or_default()
         };
 
@@ -434,7 +441,7 @@ impl RollbackJournal {
     ) -> Result<Vec<String>, String> {
         // 1. Drain matching records from in-memory journal
         let mut records: Vec<RollbackRecord> = {
-            let mut guard = self.journals.lock().unwrap();
+            let mut guard = self.lock_journals();
             if let Some(list) = guard.get_mut(task_id) {
                 let (matching, remaining): (Vec<_>, Vec<_>) = list.drain(..).partition(|r| r.turn_idx == turn_idx);
                 *list = remaining;
@@ -528,7 +535,7 @@ impl RollbackJournal {
         db: Option<&Mutex<Connection>>,
     ) -> Result<Vec<String>, String> {
         let mut records = {
-            let mut guard = self.journals.lock().unwrap();
+            let mut guard = self.lock_journals();
             guard.remove(task_id).unwrap_or_default()
         };
 
@@ -607,7 +614,7 @@ impl RollbackJournal {
     }
 
     pub fn clear_task(&self, task_id: &str, db: Option<&Mutex<Connection>>) {
-        let mut guard = self.journals.lock().unwrap();
+        let mut guard = self.lock_journals();
         guard.remove(task_id);
 
         if let Some(db_mutex) = db {

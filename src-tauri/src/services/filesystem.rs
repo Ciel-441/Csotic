@@ -9,6 +9,22 @@ fn file_cache() -> &'static Mutex<LruCache<String, String>> {
     CACHE.get_or_init(|| Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())))
 }
 
+fn cache_get(key: &str) -> Option<String> {
+    file_cache().lock().ok().and_then(|mut c| c.get(key).cloned())
+}
+
+fn cache_put(key: String, content: String) {
+    if let Ok(mut c) = file_cache().lock() {
+        c.put(key, content);
+    }
+}
+
+fn cache_pop(key: &str) {
+    if let Ok(mut c) = file_cache().lock() {
+        c.pop(key);
+    }
+}
+
 const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024; // 2MB
 
 fn strip_unc_prefix(path_str: &str) -> String {
@@ -204,8 +220,7 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
             let bytes = content.len();
             fs::write(&resolved, content).map_err(|e| format!("Write failed: {e}"))?;
             let key = resolved.to_string_lossy().to_string();
-            let mut cache = file_cache().lock().unwrap();
-            cache.put(key, content.to_string());
+            cache_put(key, content.to_string());
             let hash = compute_sha256(content);
             Ok(serde_json::json!({ "written": true, "bytes": bytes, "hash": hash, "path": resolved.to_string_lossy() }))
         }
@@ -449,11 +464,8 @@ pub fn read_file_str(project_path: &str, path: &str) -> Result<String, String> {
     let resolved = safe_resolve(project_path, path)?;
     let key = resolved.to_string_lossy().to_string();
 
-    {
-        let mut cache = file_cache().lock().unwrap();
-        if let Some(content) = cache.get(&key) {
-            return Ok(content.clone());
-        }
+    if let Some(content) = cache_get(&key) {
+        return Ok(content);
     }
 
     let meta = fs::metadata(&resolved).map_err(|e| format!("File not found: {e}"))?;
@@ -463,8 +475,7 @@ pub fn read_file_str(project_path: &str, path: &str) -> Result<String, String> {
     
     let content = fs::read_to_string(&resolved).map_err(|_| "File is not valid UTF-8".to_string())?;
     
-    let mut cache = file_cache().lock().unwrap();
-    cache.put(key, content.clone());
+    cache_put(key, content.clone());
     Ok(content)
 }
 
@@ -492,8 +503,7 @@ pub(crate) fn restore_file_for_rollback(project_path: &str, path: &str, content:
     let bytes = content.len();
     fs::write(&resolved, content).map_err(|e| format!("Write failed: {e}"))?;
     
-    let mut cache = file_cache().lock().unwrap();
-    cache.put(key, content.to_string());
+    cache_put(key, content.to_string());
     
     Ok(bytes)
 }
@@ -514,8 +524,7 @@ pub fn create_file_strict(project_path: &str, path: &str, content: &str) -> Resu
 
     fs::write(&resolved, content).map_err(|e| format!("Failed to create file: {e}"))?;
     let key = resolved.to_string_lossy().to_string();
-    let mut cache = file_cache().lock().unwrap();
-    cache.put(key, content.to_string());
+    cache_put(key, content.to_string());
 
     let hash = compute_sha256(content);
     Ok(hash)
@@ -548,8 +557,7 @@ pub fn modify_file_strict(
 
     fs::write(&resolved, new_content).map_err(|e| format!("Failed to write file: {e}"))?;
     let key = resolved.to_string_lossy().to_string();
-    let mut cache = file_cache().lock().unwrap();
-    cache.put(key, new_content.to_string());
+    cache_put(key, new_content.to_string());
 
     let new_hash = compute_sha256(new_content);
     Ok((old_content, new_hash))
@@ -593,8 +601,7 @@ pub fn patch_file_strict(
     fs::write(&resolved, &new_content).map_err(|e| format!("Failed to write patch: {e}"))?;
 
     let key = resolved.to_string_lossy().to_string();
-    let mut cache = file_cache().lock().unwrap();
-    cache.put(key, new_content.clone());
+    cache_put(key, new_content.clone());
 
     let new_hash = compute_sha256(&new_content);
     Ok((old_content, new_content, new_hash))
@@ -618,8 +625,7 @@ pub fn delete_file_strict(project_path: &str, path: &str, approved: bool) -> Res
     }
 
     let key = resolved.to_string_lossy().to_string();
-    let mut cache = file_cache().lock().unwrap();
-    cache.pop(&key);
+    cache_pop(&key);
 
     Ok(())
 }
@@ -643,8 +649,7 @@ pub fn move_file_strict(project_path: &str, source: &str, destination: &str) -> 
     fs::rename(&resolved_src, &resolved_dest).map_err(|e| format!("Move failed: {e}"))?;
 
     let src_key = resolved_src.to_string_lossy().to_string();
-    let mut cache = file_cache().lock().unwrap();
-    cache.pop(&src_key);
+    cache_pop(&src_key);
 
     Ok(())
 }
@@ -670,8 +675,7 @@ pub fn copy_file_strict(project_path: &str, source: &str, destination: &str) -> 
 
     let hash = compute_sha256(&src_content);
     let key = resolved_dest.to_string_lossy().to_string();
-    let mut cache = file_cache().lock().unwrap();
-    cache.put(key, src_content);
+    cache_put(key, src_content);
 
     Ok(hash)
 }

@@ -38,21 +38,25 @@ fn registry() -> &'static StdMutex<HashMap<String, RunHandle>> {
 fn register_run(request_id: &str) -> (CancelFlag, SharedPlanSteps) {
     let cancel = Arc::new(AtomicBool::new(false));
     let plan_steps: SharedPlanSteps = Arc::new(AsyncMutex::new(Vec::new()));
-    registry().lock().unwrap().insert(request_id.to_string(), RunHandle {
-        cancel: cancel.clone(),
-        plan_steps: plan_steps.clone(),
-    });
+    if let Ok(mut reg) = registry().lock() {
+        reg.insert(request_id.to_string(), RunHandle {
+            cancel: cancel.clone(),
+            plan_steps: plan_steps.clone(),
+        });
+    }
     (cancel, plan_steps)
 }
 
 fn unregister_run(request_id: &str) {
-    registry().lock().unwrap().remove(request_id);
+    if let Ok(mut reg) = registry().lock() {
+        reg.remove(request_id);
+    }
 }
 
 /// Snapshot of plan_steps for a request, used to report real progress on
 /// timeout/cancel instead of an empty list.
 async fn snapshot_plan_steps(request_id: &str) -> Vec<PlanStep> {
-    let handle = registry().lock().unwrap().get(request_id).map(|h| h.plan_steps.clone());
+    let handle = registry().lock().ok().and_then(|reg| reg.get(request_id).map(|h| h.plan_steps.clone()));
     match handle {
         Some(steps) => steps.lock().await.clone(),
         None => Vec::new(),
@@ -174,7 +178,7 @@ pub async fn handle(
         "cancel_request" => {
             let request_id = payload.get("request_id").and_then(Value::as_str)
                 .ok_or("Missing 'request_id'")?;
-            let found = registry().lock().unwrap().get(request_id).map(|h| h.cancel.clone());
+            let found = registry().lock().ok().and_then(|reg| reg.get(request_id).map(|h| h.cancel.clone()));
             match found {
                 Some(flag) => {
                     flag.store(true, Ordering::SeqCst);
