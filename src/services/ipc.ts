@@ -208,6 +208,9 @@ export const plugins = {
   installExtension: (ext: Record<string, any>) => ipcRequest("plugins", "install_extension", ext),
   uninstallExtension: (id: string) => ipcRequest("plugins", "uninstall_extension", { id }),
   getInstalledExtensions: () => ipcRequest("plugins", "get_installed_extensions"),
+  trustWorkspace: (projectPath: string) => ipcRequest("plugins", "trust_workspace", { project_path: projectPath }),
+  untrustWorkspace: (projectPath: string) => ipcRequest("plugins", "untrust_workspace", { project_path: projectPath }),
+  isWorkspaceTrusted: (projectPath: string) => ipcRequest("plugins", "is_workspace_trusted", { project_path: projectPath }),
 };
 
 /** Collaboration service shortcuts */

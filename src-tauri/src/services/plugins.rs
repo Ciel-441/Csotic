@@ -106,6 +106,27 @@ pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::V
                 Err("Missing project_path".to_string())
             }
         }
+        "is_workspace_trusted" => {
+            let project_path = payload.get("project_path").and_then(|v| v.as_str()).unwrap_or("");
+            let trusted = if let Ok(reg) = REGISTRY.read() {
+                reg.trusted_workspaces.contains(project_path)
+            } else {
+                false
+            };
+            Ok(serde_json::json!({ "trusted": trusted }))
+        }
+        "untrust_workspace" => {
+            if let Some(project_path) = payload.get("project_path").and_then(|v| v.as_str()) {
+                if let Ok(mut reg) = REGISTRY.write() {
+                    reg.trusted_workspaces.remove(project_path);
+                    reg.plugins.retain(|p| p.project_path().as_deref() != Some(project_path));
+                    reg.loaded_workspaces.remove(project_path);
+                }
+                Ok(serde_json::json!({ "trusted": false }))
+            } else {
+                Err("Missing project_path".to_string())
+            }
+        }
         "scaffold_plugin" => {
             if let Some(project_path) = payload.get("project_path").and_then(|v| v.as_str()) {
                 let plugins_dir = Path::new(project_path).join(".forge").join("plugins");
@@ -457,4 +478,32 @@ pub fn reload_workspace_plugins(project_path: &str) {
     load_workspace_plugins(project_path);
 }
 
-// End of file
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_workspace_trust_lifecycle() {
+        let fake_path = "C:/fake/workspace/test_path";
+
+        // Initial state: not trusted
+        let check_res = handle("is_workspace_trusted", &serde_json::json!({ "project_path": fake_path })).unwrap();
+        assert_eq!(check_res["trusted"], false);
+
+        // Trust workspace
+        let trust_res = handle("trust_workspace", &serde_json::json!({ "project_path": fake_path })).unwrap();
+        assert_eq!(trust_res["trusted"], true);
+
+        // Verify trusted
+        let check_res2 = handle("is_workspace_trusted", &serde_json::json!({ "project_path": fake_path })).unwrap();
+        assert_eq!(check_res2["trusted"], true);
+
+        // Untrust workspace
+        let untrust_res = handle("untrust_workspace", &serde_json::json!({ "project_path": fake_path })).unwrap();
+        assert_eq!(untrust_res["trusted"], false);
+
+        // Verify untrusted
+        let check_res3 = handle("is_workspace_trusted", &serde_json::json!({ "project_path": fake_path })).unwrap();
+        assert_eq!(check_res3["trusted"], false);
+    }
+}

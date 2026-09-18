@@ -512,6 +512,36 @@ pub async fn handle(action: &str, payload: &serde_json::Value, app: &AppHandle, 
 
             Ok(serde_json::Value::Array(models))
         }
+        "execute_prompt" => {
+            let model_id = payload.get("model_id").and_then(|v| v.as_str())
+                .ok_or("Missing 'model_id'")?.to_string();
+            let prompt = payload.get("prompt").and_then(|v| v.as_str())
+                .ok_or("Missing 'prompt'")?.to_string();
+            let system_prompt = payload.get("system_prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            let openai_key = get_api_key(db, "openai");
+            let anthropic_key = get_api_key(db, "anthropic");
+            let deepseek_key = get_api_key(db, "deepseek");
+            let groq_key = get_api_key(db, "groq");
+            let openrouter_key = get_api_key(db, "openrouter");
+            let gemini_key = get_api_key(db, "gemini");
+            let custom_str = get_api_key(db, "custom_endpoints");
+
+            let res = execute_prompt_non_streaming(
+                &model_id,
+                &prompt,
+                system_prompt.as_deref(),
+                openai_key.as_deref(),
+                anthropic_key.as_deref(),
+                deepseek_key.as_deref(),
+                groq_key.as_deref(),
+                openrouter_key.as_deref(),
+                gemini_key.as_deref(),
+                custom_str.as_deref(),
+            ).await?;
+
+            Ok(serde_json::json!({ "response": res }))
+        }
         "stream_prompt" => {
             let model_id = payload.get("model_id").and_then(|v| v.as_str())
                 .ok_or("Missing 'model_id'")?.to_string();
@@ -1402,6 +1432,205 @@ fn read_image_base64(path: &str) -> Result<String, String> {
     Ok(general_purpose::STANDARD.encode(&buf))
 }
 
+async fn execute_prompt_non_streaming(
+    model_id: &str,
+    prompt: &str,
+    system_prompt: Option<&str>,
+    openai_key: Option<&str>,
+    anthropic_key: Option<&str>,
+    deepseek_key: Option<&str>,
+    groq_key: Option<&str>,
+    openrouter_key: Option<&str>,
+    gemini_key: Option<&str>,
+    custom_str: Option<&str>,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Csotic-IDE/0.1.0")
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    // 1. OpenRouter
+    if is_openrouter_model(model_id) {
+        let key = openrouter_key.unwrap_or("").trim();
+        return call_openai_compat_completion(&client, "https://openrouter.ai/api/v1", key, model_id, prompt, system_prompt).await;
+    }
+
+    // 2. OpenAI
+    if is_openai_model(model_id) {
+        let key = openai_key.ok_or_else(|| "OpenAI API key is missing. Please configure it in Settings.".to_string())?;
+        return call_openai_compat_completion(&client, "https://api.openai.com/v1", key.trim(), model_id, prompt, system_prompt).await;
+    }
+
+    // 3. DeepSeek
+    if model_id.starts_with("deepseek") {
+        let key = deepseek_key.ok_or_else(|| "DeepSeek API key is missing. Please configure it in Settings.".to_string())?;
+        return call_openai_compat_completion(&client, "https://api.deepseek.com", key.trim(), model_id, prompt, system_prompt).await;
+    }
+
+    // 4. Groq
+    if is_groq_model(model_id) {
+        let key = groq_key.ok_or_else(|| "Groq API key is missing. Please configure it in Settings.".to_string())?;
+        return call_openai_compat_completion(&client, "https://api.groq.com/openai/v1", key.trim(), model_id, prompt, system_prompt).await;
+    }
+
+    // 5. Gemini
+    if is_gemini_model(model_id) {
+        let key = gemini_key.ok_or_else(|| "Gemini API key is missing. Please configure it in Settings.".to_string())?;
+        return call_openai_compat_completion(&client, "https://generativelanguage.googleapis.com/v1beta/openai", key.trim(), model_id, prompt, system_prompt).await;
+    }
+
+    // 6. Anthropic
+    if is_anthropic_model(model_id) {
+        let key = anthropic_key.ok_or_else(|| "Anthropic API key is missing. Please configure it in Settings.".to_string())?;
+        let mut messages = Vec::new();
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": prompt
+        }));
+
+        let mut body = serde_json::json!({
+            "model": model_id,
+            "messages": messages,
+            "max_tokens": 4096,
+        });
+        if let Some(sys) = system_prompt {
+            body["system"] = serde_json::Value::String(sys.to_string());
+        }
+
+        let res = client.post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", key.trim())
+            .header("anthropic-version", "2023-06-01")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Anthropic request failed: {e}"))?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let err_txt = res.text().await.unwrap_or_default();
+            return Err(format!("Anthropic error ({status}): {err_txt}"));
+        }
+
+        let json: serde_json::Value = res.json().await.map_err(|e| format!("Failed to parse Anthropic JSON: {e}"))?;
+        if let Some(content_arr) = json["content"].as_array() {
+            for item in content_arr {
+                if let Some(txt) = item.get("text").and_then(|t| t.as_str()) {
+                    return Ok(txt.to_string());
+                }
+            }
+        }
+        return Ok(String::new());
+    }
+
+    // 7. Custom endpoints
+    if let Some(custom_data) = custom_str {
+        if let Ok(endpoints) = serde_json::from_str::<Vec<serde_json::Value>>(custom_data) {
+            for ep in endpoints {
+                let ep_model = ep.get("model_id").and_then(|v| v.as_str()).unwrap_or("");
+                if ep_model == model_id || ep.get("name").and_then(|v| v.as_str()).unwrap_or("") == model_id {
+                    let base_url = ep.get("base_url").and_then(|v| v.as_str()).unwrap_or("http://localhost:8000/v1");
+                    let key = ep.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+                    return call_openai_compat_completion(&client, base_url, key, model_id, prompt, system_prompt).await;
+                }
+            }
+        }
+    }
+
+    // 8. Fallback: Ollama local chat API non-streaming
+    let ollama_client = OllamaClient::new(None);
+    let mut messages = Vec::new();
+    if let Some(sys) = system_prompt {
+        messages.push(OllamaMessage::system(sys));
+    }
+    messages.push(OllamaMessage::user(prompt));
+
+    let req = OllamaChatRequest {
+        model: model_id.to_string(),
+        messages,
+        tools: None,
+        options: Some(serde_json::json!({
+            "num_predict": 4096,
+            "temperature": 0.2
+        })),
+        stream: false,
+    };
+
+    match ollama_client.chat(&req).await {
+        Ok(resp) => Ok(resp.message.and_then(|m| m.content).unwrap_or_default()),
+        Err(e) => Err(format!("Ollama local completion failed: {e}")),
+    }
+}
+
+async fn call_openai_compat_completion(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    prompt: &str,
+    system_prompt: Option<&str>,
+) -> Result<String, String> {
+    let mut messages = Vec::new();
+    if let Some(sys) = system_prompt {
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": sys
+        }));
+    }
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": prompt
+    }));
+
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": 4096,
+        "stream": false
+    });
+
+    if base_url.contains("openrouter") {
+        body["provider"] = serde_json::json!({
+            "allow_fallbacks": true,
+            "data_collection": "allow"
+        });
+    }
+
+    let url = if base_url.ends_with("/chat/completions") {
+        base_url.to_string()
+    } else {
+        format!("{}/chat/completions", base_url.trim_end_matches('/'))
+    };
+
+    let mut req_builder = client.post(&url);
+    if !api_key.trim().is_empty() {
+        req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key.trim()));
+    }
+    if base_url.contains("openrouter") {
+        req_builder = req_builder
+            .header("HTTP-Referer", "https://csotic.dev")
+            .header("X-Title", "Csotic IDE");
+    }
+
+    let res = req_builder.json(&body).send().await.map_err(|e| format!("Network request failed: {e}"))?;
+    if !res.status().is_success() {
+        let status = res.status();
+        let err_text = res.text().await.unwrap_or_default();
+        return Err(format!("Model API error ({status}): {err_text}"));
+    }
+
+    let json: serde_json::Value = res.json().await.map_err(|e| format!("Failed to parse response JSON: {e}"))?;
+    if let Some(choices) = json["choices"].as_array() {
+        if let Some(first) = choices.first() {
+            if let Some(content) = first.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
+                return Ok(content.to_string());
+            }
+        }
+    }
+    Ok(String::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1423,5 +1652,23 @@ mod tests {
         let legacy_encoded = base64::engine::general_purpose::STANDARD.encode(legacy_salted.as_bytes());
         let decoded = decode_secret(&legacy_encoded);
         assert_eq!(decoded, "sk-ant-legacy-key");
+    }
+
+    #[tokio::test]
+    async fn test_execute_prompt_missing_api_key_error_shape() {
+        let res = execute_prompt_non_streaming(
+            "gpt-4o",
+            "hello",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ).await;
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("OpenAI API key is missing"));
     }
 }
