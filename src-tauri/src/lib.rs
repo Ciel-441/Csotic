@@ -1,3 +1,5 @@
+#![warn(clippy::unwrap_used)]
+
 mod ipc;
 mod services;
 mod ollama;
@@ -24,7 +26,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_dir = app.path().app_data_dir().unwrap_or_else(|_| {
-                std::env::current_dir().unwrap().join("data")
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("data")
             });
             std::fs::create_dir_all(&app_dir).ok();
             let db_path = app_dir.join("forge.db");
