@@ -1,9 +1,9 @@
-use notify::{RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use once_cell::sync::Lazy;
+use rusqlite::Connection;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use rusqlite::Connection;
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -116,10 +116,12 @@ pub fn watch_workspace(project_path: &str, db: Arc<Mutex<Connection>>) -> Result
                 });
             }
         }
-    }).map_err(|e| format!("Failed to create filesystem watcher: {e}"))?;
+    })
+    .map_err(|e| format!("Failed to create filesystem watcher: {e}"))?;
 
     if Path::new(clean_path).exists() {
-        watcher.watch(Path::new(clean_path), RecursiveMode::Recursive)
+        watcher
+            .watch(Path::new(clean_path), RecursiveMode::Recursive)
             .map_err(|e| format!("Failed to watch directory: {e}"))?;
         state._watcher = Some(watcher);
         state.active_path = Some(clean_path.to_string());

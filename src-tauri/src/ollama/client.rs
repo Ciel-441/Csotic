@@ -17,7 +17,10 @@ impl OllamaClient {
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .unwrap_or_default(),
-            base_url: base_url.unwrap_or(DEFAULT_BASE_URL).trim_end_matches('/').to_string(),
+            base_url: base_url
+                .unwrap_or(DEFAULT_BASE_URL)
+                .trim_end_matches('/')
+                .to_string(),
         }
     }
 
@@ -26,7 +29,8 @@ impl OllamaClient {
         let mut req = request.clone();
         req.stream = false;
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/api/chat", self.base_url))
             .json(&req)
             .send()
@@ -47,11 +51,17 @@ impl OllamaClient {
     pub async fn chat_stream(
         &self,
         request: &OllamaChatRequest,
-    ) -> Result<std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<OllamaChatResponse, String>> + Send>>, String> {
+    ) -> Result<
+        std::pin::Pin<
+            Box<dyn futures_util::Stream<Item = Result<OllamaChatResponse, String>> + Send>,
+        >,
+        String,
+    > {
         let mut req = request.clone();
         req.stream = true;
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/api/chat", self.base_url))
             .json(&req)
             .send()
@@ -73,14 +83,19 @@ impl OllamaClient {
                     let line_bytes = buffer.drain(..=pos).collect::<Vec<u8>>();
                     let line = String::from_utf8_lossy(&line_bytes);
                     let line = line.trim();
-                    if line.is_empty() { continue; }
-                    
+                    if line.is_empty() {
+                        continue;
+                    }
+
                     match serde_json::from_str::<OllamaChatResponse>(line) {
                         Ok(parsed) => {
                             return Some((Ok(parsed), (stream, buffer)));
                         }
                         Err(e) => {
-                            return Some((Err(format!("JSON parse error: {e} on line: {line}")), (stream, buffer)));
+                            return Some((
+                                Err(format!("JSON parse error: {e} on line: {line}")),
+                                (stream, buffer),
+                            ));
                         }
                     }
                 }
@@ -103,7 +118,12 @@ impl OllamaClient {
                                         return Some((Ok(parsed), (stream, buffer)));
                                     }
                                     Err(e) => {
-                                        return Some((Err(format!("JSON parse error: {e} on leftover: {line}")), (stream, buffer)));
+                                        return Some((
+                                            Err(format!(
+                                                "JSON parse error: {e} on leftover: {line}"
+                                            )),
+                                            (stream, buffer),
+                                        ));
                                     }
                                 }
                             }
@@ -119,7 +139,8 @@ impl OllamaClient {
 
     /// List available models
     pub async fn tags(&self) -> Result<OllamaTagsResponse, String> {
-        let resp = self.client
+        let resp = self
+            .client
             .get(format!("{}/api/tags", self.base_url))
             .timeout(std::time::Duration::from_millis(1000))
             .send()
@@ -133,9 +154,12 @@ impl OllamaClient {
 
     /// Show model details (for context window)
     pub async fn show(&self, model: &str) -> Result<OllamaShowResponse, String> {
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/api/show", self.base_url))
-            .json(&OllamaShowRequest { name: model.to_string() })
+            .json(&OllamaShowRequest {
+                name: model.to_string(),
+            })
             .timeout(std::time::Duration::from_millis(1500))
             .send()
             .await

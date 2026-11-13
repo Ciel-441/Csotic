@@ -14,14 +14,24 @@ pub fn scan_codebase(active_files: &[String], project_path: &str) -> String {
                 let trimmed = line.trim();
 
                 // Skip comments
-                if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('#') || trimmed.starts_with('*') {
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with('#')
+                    || trimmed.starts_with('*')
+                {
                     continue;
                 }
 
                 // 1. Hardcoded Secrets & Token Leaks
-                if (trimmed.contains("sk-") || trimmed.contains("ghp_") || trimmed.contains("AIza") || trimmed.contains("xoxb-"))
-                    && (trimmed.contains('=') || trimmed.contains(':')) 
-                    && !trimmed.contains("process.env") && !trimmed.contains("std::env") && !trimmed.contains("env::var") {
+                if (trimmed.contains("sk-")
+                    || trimmed.contains("ghp_")
+                    || trimmed.contains("AIza")
+                    || trimmed.contains("xoxb-"))
+                    && (trimmed.contains('=') || trimmed.contains(':'))
+                    && !trimmed.contains("process.env")
+                    && !trimmed.contains("std::env")
+                    && !trimmed.contains("env::var")
+                {
                     warnings.push(format!(
                         "- [CRITICAL SECRET LEAK]: Potential hardcoded API token/secret on line {} of `{}`.",
                         line_num, file
@@ -36,8 +46,14 @@ pub fn scan_codebase(active_files: &[String], project_path: &str) -> String {
                 }
 
                 // 2. Dangerous Execution & Command Injection
-                if (trimmed.contains("eval(") || trimmed.contains("new Function(") || trimmed.contains("window.eval"))
-                    && (file.ends_with(".js") || file.ends_with(".ts") || file.ends_with(".tsx") || file.ends_with(".jsx")) {
+                if (trimmed.contains("eval(")
+                    || trimmed.contains("new Function(")
+                    || trimmed.contains("window.eval"))
+                    && (file.ends_with(".js")
+                        || file.ends_with(".ts")
+                        || file.ends_with(".tsx")
+                        || file.ends_with(".jsx"))
+                {
                     warnings.push(format!(
                         "- [HIGH CODE INJECTION]: Arbitrary code execution (`eval` / `new Function`) detected on line {} of `{}`.",
                         line_num, file
@@ -45,7 +61,9 @@ pub fn scan_codebase(active_files: &[String], project_path: &str) -> String {
                 }
 
                 if (trimmed.contains("child_process.exec(") || trimmed.contains("execSync("))
-                    && !trimmed.contains("execFile") && (file.ends_with(".js") || file.ends_with(".ts")) {
+                    && !trimmed.contains("execFile")
+                    && (file.ends_with(".js") || file.ends_with(".ts"))
+                {
                     warnings.push(format!(
                         "- [COMMAND INJECTION RISK]: Raw shell command execution (`child_process.exec`) on line {} of `{}`.",
                         line_num, file
@@ -61,8 +79,16 @@ pub fn scan_codebase(active_files: &[String], project_path: &str) -> String {
                 }
 
                 // 4. SQL Injection Patterns
-                if (trimmed.contains("SELECT ") || trimmed.contains("INSERT INTO ") || trimmed.contains("UPDATE ") || trimmed.contains("DELETE FROM "))
-                    && (trimmed.contains("format!(\"") || (trimmed.contains(" + ") && (trimmed.contains("req.") || trimmed.contains("input") || trimmed.contains("params")))) {
+                if (trimmed.contains("SELECT ")
+                    || trimmed.contains("INSERT INTO ")
+                    || trimmed.contains("UPDATE ")
+                    || trimmed.contains("DELETE FROM "))
+                    && (trimmed.contains("format!(\"")
+                        || (trimmed.contains(" + ")
+                            && (trimmed.contains("req.")
+                                || trimmed.contains("input")
+                                || trimmed.contains("params"))))
+                {
                     warnings.push(format!(
                         "- [SQL INJECTION RISK]: Dynamic SQL string concatenation detected on line {} of `{}`. Use parameterized queries.",
                         line_num, file

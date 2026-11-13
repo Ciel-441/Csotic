@@ -1,18 +1,18 @@
 #![warn(clippy::unwrap_used)]
 #![allow(clippy::too_many_arguments, clippy::upper_case_acronyms)]
 
-mod ipc;
-mod services;
-mod ollama;
-mod tools;
 mod db;
 mod events;
+mod ipc;
+mod ollama;
+mod services;
+mod tools;
 
-use std::sync::{Arc, Mutex};
-use tauri::Manager;
+use ipc::commands::ipc_request;
 use rusqlite::Connection;
 use services::terminal::ProcessHandle;
-use ipc::commands::ipc_request;
+use std::sync::{Arc, Mutex};
+use tauri::Manager;
 
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
@@ -27,12 +27,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_dir = app.path().app_data_dir().unwrap_or_else(|_| {
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("data")
+                std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("data")
             });
             std::fs::create_dir_all(&app_dir).ok();
             let db_path = app_dir.join("forge.db");
             let conn = db::init_db(&db_path).expect("failed to initialize sqlite database");
-            
+
             app.manage(AppState {
                 db: Arc::new(Mutex::new(conn)),
                 process_handle: std::sync::Arc::new(tokio::sync::Mutex::new(None)),

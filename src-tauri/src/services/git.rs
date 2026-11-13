@@ -21,7 +21,9 @@ fn run_git(cwd: &str, args: &[&str]) -> Result<String, String> {
 }
 
 pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::Value, String> {
-    let cwd = payload.get("project_path").and_then(|v| v.as_str())
+    let cwd = payload
+        .get("project_path")
+        .and_then(|v| v.as_str())
         .ok_or("Missing 'project_path'")?;
 
     match action {
@@ -38,7 +40,9 @@ pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::V
             Ok(serde_json::json!({ "diff": out }))
         }
         "show" => {
-            let path = payload.get("path").and_then(|v| v.as_str())
+            let path = payload
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'path'")?;
             let out = run_git(cwd, &["show", &format!("HEAD:{path}")])?;
             Ok(serde_json::json!({ "content": out }))
@@ -53,7 +57,9 @@ pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::V
             Ok(serde_json::json!({ "added": true }))
         }
         "commit" => {
-            let message = payload.get("message").and_then(|v| v.as_str())
+            let message = payload
+                .get("message")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'message'")?;
             let out = run_git(cwd, &["commit", "-m", message])?;
             Ok(serde_json::json!({ "committed": true, "output": out }))
@@ -63,33 +69,55 @@ pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::V
             Ok(serde_json::json!({ "branches": out }))
         }
         "checkout" => {
-            let target = payload.get("target").and_then(|v| v.as_str())
+            let target = payload
+                .get("target")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'target'")?;
             let out = run_git(cwd, &["checkout", target])?;
             Ok(serde_json::json!({ "success": true, "output": out }))
         }
         "reset_hard" => {
-            let approved = payload.get("approved").and_then(|v| v.as_bool()).unwrap_or(false);
-            if !approved { return Err("Permission denied: git reset --hard requires approval".into()); }
+            let approved = payload
+                .get("approved")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !approved {
+                return Err("Permission denied: git reset --hard requires approval".into());
+            }
             let out = run_git(cwd, &["reset", "--hard"])?;
             Ok(serde_json::json!({ "success": true, "output": out }))
         }
         "force_push" => {
-            let approved = payload.get("approved").and_then(|v| v.as_bool()).unwrap_or(false);
-            if !approved { return Err("Permission denied: force push requires approval".into()); }
+            let approved = payload
+                .get("approved")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !approved {
+                return Err("Permission denied: force push requires approval".into());
+            }
             let out = run_git(cwd, &["push", "--force"])?;
             Ok(serde_json::json!({ "success": true, "output": out }))
         }
         "branch_delete" => {
-            let branch = payload.get("branch").and_then(|v| v.as_str())
+            let branch = payload
+                .get("branch")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'branch'")?;
-            let approved = payload.get("approved").and_then(|v| v.as_bool()).unwrap_or(false);
-            if !approved { return Err("Permission denied: branch delete requires approval".into()); }
+            let approved = payload
+                .get("approved")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !approved {
+                return Err("Permission denied: branch delete requires approval".into());
+            }
             let out = run_git(cwd, &["branch", "-D", branch])?;
             Ok(serde_json::json!({ "success": true, "output": out }))
         }
         "stash" => {
-            let sub = payload.get("subaction").and_then(|v| v.as_str()).unwrap_or("push");
+            let sub = payload
+                .get("subaction")
+                .and_then(|v| v.as_str())
+                .unwrap_or("push");
             let out = match sub {
                 "pop" => run_git(cwd, &["stash", "pop"])?,
                 _ => run_git(cwd, &["stash"])?,
@@ -111,14 +139,20 @@ pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::V
             Ok(serde_json::json!({ "success": true, "output": out }))
         }
         "discard" => {
-            let path = payload.get("path").and_then(|v| v.as_str()).ok_or("Missing 'path'")?;
+            let path = payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'path'")?;
             let _ = run_git(cwd, &["restore", path])
                 .or_else(|_| run_git(cwd, &["checkout", "--", path]));
             let _ = run_git(cwd, &["clean", "-f", "-d", path]);
             Ok(serde_json::json!({ "success": true }))
         }
         "create_branch" => {
-            let name = payload.get("name").and_then(|v| v.as_str()).ok_or("Missing 'name'")?;
+            let name = payload
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'name'")?;
             let out = run_git(cwd, &["checkout", "-b", name])?;
             Ok(serde_json::json!({ "success": true, "output": out }))
         }

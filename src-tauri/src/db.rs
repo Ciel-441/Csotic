@@ -10,14 +10,16 @@ pub fn init_db(db_path: &Path) -> SqlResult<Connection> {
          PRAGMA foreign_keys = ON;
          PRAGMA cache_size = -2000;
          PRAGMA temp_store = MEMORY;
-         PRAGMA mmap_size = 67108864;"
+         PRAGMA mmap_size = 67108864;",
     )?;
     migrate(&conn)?;
     Ok(conn)
 }
 
 fn migrate(conn: &Connection) -> SqlResult<()> {
-    let current_version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap_or(0);
+    let current_version: i32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(0);
 
     if current_version < 1 {
         conn.execute_batch(
@@ -250,4 +252,3 @@ fn migrate(conn: &Connection) -> SqlResult<()> {
 
     Ok(())
 }
-

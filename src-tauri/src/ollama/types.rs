@@ -82,22 +82,52 @@ pub struct OllamaShowResponse {
 
 impl OllamaMessage {
     pub fn system(content: &str) -> Self {
-        Self { role: "system".into(), content: Some(content.into()), tool_calls: None, images: None }
+        Self {
+            role: "system".into(),
+            content: Some(content.into()),
+            tool_calls: None,
+            images: None,
+        }
     }
     pub fn user(content: &str) -> Self {
-        Self { role: "user".into(), content: Some(content.into()), tool_calls: None, images: None }
+        Self {
+            role: "user".into(),
+            content: Some(content.into()),
+            tool_calls: None,
+            images: None,
+        }
     }
     pub fn user_with_images(content: &str, images: Vec<String>) -> Self {
-        Self { role: "user".into(), content: Some(content.into()), tool_calls: None, images: Some(images) }
+        Self {
+            role: "user".into(),
+            content: Some(content.into()),
+            tool_calls: None,
+            images: Some(images),
+        }
     }
     pub fn assistant(content: &str) -> Self {
-        Self { role: "assistant".into(), content: Some(content.into()), tool_calls: None, images: None }
+        Self {
+            role: "assistant".into(),
+            content: Some(content.into()),
+            tool_calls: None,
+            images: None,
+        }
     }
     #[allow(dead_code)]
     pub fn assistant_tool_calls(calls: Vec<OllamaToolCall>) -> Self {
-        Self { role: "assistant".into(), content: None, tool_calls: Some(calls), images: None }
+        Self {
+            role: "assistant".into(),
+            content: None,
+            tool_calls: Some(calls),
+            images: None,
+        }
     }
     pub fn tool(content: &str) -> Self {
-        Self { role: "tool".into(), content: Some(content.into()), tool_calls: None, images: None }
+        Self {
+            role: "tool".into(),
+            content: Some(content.into()),
+            tool_calls: None,
+            images: None,
+        }
     }
 }

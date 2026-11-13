@@ -1,7 +1,7 @@
+use ignore::WalkBuilder;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use serde::{Serialize, Deserialize};
-use ignore::WalkBuilder;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrainNote {
@@ -211,9 +211,13 @@ pub fn list_notes(project_path: &str) -> Vec<BrainNote> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
-                let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let filename = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 let content = fs::read_to_string(&path).unwrap_or_default();
-                
+
                 // Extract title (first # Heading or filename)
                 let mut title = filename.replace(".md", "");
                 let mut summary = String::new();
@@ -223,14 +227,17 @@ pub fn list_notes(project_path: &str) -> Vec<BrainNote> {
                     let trimmed = line.trim();
                     if trimmed.starts_with("# ") && title == filename.replace(".md", "") {
                         title = trimmed.trim_start_matches("# ").trim().to_string();
-                    } else if !trimmed.is_empty() && summary.is_empty() && !trimmed.starts_with('#') {
+                    } else if !trimmed.is_empty() && summary.is_empty() && !trimmed.starts_with('#')
+                    {
                         summary = trimmed.chars().take(120).collect();
                     }
 
                     // Extract tags like #arch, #todo, #v1
                     for word in trimmed.split_whitespace() {
                         if word.starts_with('#') && word.len() > 1 && !word.starts_with("##") {
-                            let tag = word.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                            let tag = word
+                                .trim_matches(|c: char| !c.is_alphanumeric())
+                                .to_string();
                             if !tag.is_empty() && !tags.contains(&tag) {
                                 tags.push(tag);
                             }
@@ -238,7 +245,8 @@ pub fn list_notes(project_path: &str) -> Vec<BrainNote> {
                     }
                 }
 
-                let updated_at = entry.metadata()
+                let updated_at = entry
+                    .metadata()
                     .and_then(|m| m.modified())
                     .map(|t| {
                         let duration = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -265,22 +273,43 @@ pub fn list_notes(project_path: &str) -> Vec<BrainNote> {
 }
 
 /// Creates a new note in the project brain vault.
-pub fn create_note(project_path: &str, title: &str, content: Option<&str>) -> Result<BrainNote, String> {
+pub fn create_note(
+    project_path: &str,
+    title: &str,
+    content: Option<&str>,
+) -> Result<BrainNote, String> {
     let brain_dir = ensure_brain_vault(project_path);
     let slug = title
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
-    
-    let filename = if slug.ends_with(".md") { slug } else { format!("{slug}.md") };
+
+    let filename = if slug.ends_with(".md") {
+        slug
+    } else {
+        format!("{slug}.md")
+    };
     let file_path = brain_dir.join(&filename);
 
     if file_path.exists() {
-        return Err(format!("Note `{}` already exists in brain vault.", filename));
+        return Err(format!(
+            "Note `{}` already exists in brain vault.",
+            filename
+        ));
     }
 
-    let default_content = format!("# {}\n\nCreated: {}\n\n", title, chrono::Local::now().format("%Y-%m-%d %H:%M"));
+    let default_content = format!(
+        "# {}\n\nCreated: {}\n\n",
+        title,
+        chrono::Local::now().format("%Y-%m-%d %H:%M")
+    );
     let body = content.unwrap_or(&default_content);
 
     fs::write(&file_path, body).map_err(|e| format!("Failed to create note: {e}"))?;
@@ -316,31 +345,43 @@ pub fn get_graph_data(project_path: &str) -> BrainGraphData {
         if path.is_file() {
             let path_str = path.to_string_lossy().to_string();
             // Filter noise, build directories, hidden caches, and benchmark dumps
-            if path_str.contains(".git") || path_str.contains("node_modules") 
-                || path_str.contains("target") || path_str.contains("dist") 
-                || path_str.contains(".cargo") || path_str.contains("coverage") 
-                || path_str.contains("__pycache__") || path_str.contains(".idea") {
+            if path_str.contains(".git")
+                || path_str.contains("node_modules")
+                || path_str.contains("target")
+                || path_str.contains("dist")
+                || path_str.contains(".cargo")
+                || path_str.contains("coverage")
+                || path_str.contains("__pycache__")
+                || path_str.contains(".idea")
+            {
                 continue;
             }
 
-            let rel_path = path.strip_prefix(project_path)
+            let rel_path = path
+                .strip_prefix(project_path)
                 .unwrap_or(path)
                 .to_string_lossy()
                 .replace('\\', "/");
 
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let is_brain_note = path_str.contains(".forge") && path_str.contains("brain");
-            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let file_name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
 
             // Skip excessive raw benchmark or temporary generated files
-            if (file_name.starts_with("bench_") || file_name.starts_with('.'))
-                && !is_brain_note {
-                    continue;
-                }
+            if (file_name.starts_with("bench_") || file_name.starts_with('.')) && !is_brain_note {
+                continue;
+            }
 
             let kind = if is_brain_note {
                 "note"
-            } else if matches!(ext, "rs" | "ts" | "tsx" | "js" | "jsx" | "c" | "cpp" | "h" | "py" | "go" | "salivo") {
+            } else if matches!(
+                ext,
+                "rs" | "ts" | "tsx" | "js" | "jsx" | "c" | "cpp" | "h" | "py" | "go" | "salivo"
+            ) {
                 "code"
             } else if matches!(ext, "json" | "toml" | "yaml" | "yml" | "lock") {
                 "config"
@@ -384,8 +425,10 @@ pub fn get_graph_data(project_path: &str) -> BrainGraphData {
     }
 
     // 2. Extract Edges (Wikilinks `[[...]]` and File Imports)
-    let mut connection_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut edge_set: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut connection_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut edge_set: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
 
     for (source_id, _, content) in &file_contents {
         // (A) Extract Wikilinks [[target]]
@@ -395,15 +438,20 @@ pub fn get_graph_data(project_path: &str) -> BrainGraphData {
             if let Some(end) = content[actual_start..].find("]]") {
                 let link_target = content[actual_start..actual_start + end].trim();
                 let clean_target = link_target.split('|').next().unwrap_or(link_target).trim();
-                
+
                 // Match against existing nodes
                 for node in &nodes {
                     let target_stem = node.label.trim_end_matches(".md");
-                    if node.label.eq_ignore_ascii_case(clean_target) 
+                    if node.label.eq_ignore_ascii_case(clean_target)
                         || target_stem.eq_ignore_ascii_case(clean_target)
-                        || node.id.eq_ignore_ascii_case(clean_target) {
+                        || node.id.eq_ignore_ascii_case(clean_target)
+                    {
                         if node.id != *source_id {
-                            let key = if source_id < &node.id { (source_id.clone(), node.id.clone()) } else { (node.id.clone(), source_id.clone()) };
+                            let key = if source_id < &node.id {
+                                (source_id.clone(), node.id.clone())
+                            } else {
+                                (node.id.clone(), source_id.clone())
+                            };
                             if !edge_set.contains(&key) {
                                 edge_set.insert(key);
                                 edges.push(BrainEdge {
@@ -427,7 +475,11 @@ pub fn get_graph_data(project_path: &str) -> BrainGraphData {
         // (B) Extract Imports (e.g. from './Sidebar', use crate::..., #include "...")
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("import ") || trimmed.starts_with("use ") || trimmed.starts_with("#include ") || trimmed.starts_with("require(") {
+            if trimmed.starts_with("import ")
+                || trimmed.starts_with("use ")
+                || trimmed.starts_with("#include ")
+                || trimmed.starts_with("require(")
+            {
                 for node in &nodes {
                     if node.id != *source_id {
                         let stem = node.label.split('.').next().unwrap_or(&node.label);
@@ -435,17 +487,22 @@ pub fn get_graph_data(project_path: &str) -> BrainGraphData {
                         let label = &node.label;
                         let is_match = if stem.len() >= 3 {
                             // Check for path or quoted import match: e.g. "./BrainSidebarPanel" or "services::agent"
-                            trimmed.contains(label) 
-                                || trimmed.contains(&format!("\"{stem}")) 
-                                || trimmed.contains(&format!("\'{stem}")) 
-                                || trimmed.contains(&format!("/{stem}")) 
+                            trimmed.contains(label)
+                                || trimmed.contains(&format!("\"{stem}"))
+                                || trimmed.contains(&format!("\'{stem}"))
+                                || trimmed.contains(&format!("/{stem}"))
                                 || trimmed.contains(&format!("::{stem}"))
                         } else {
-                            trimmed.contains(&format!("\"{label}\"")) || trimmed.contains(&format!("\'{label}\'"))
+                            trimmed.contains(&format!("\"{label}\""))
+                                || trimmed.contains(&format!("\'{label}\'"))
                         };
 
                         if is_match {
-                            let key = if source_id < &node.id { (source_id.clone(), node.id.clone()) } else { (node.id.clone(), source_id.clone()) };
+                            let key = if source_id < &node.id {
+                                (source_id.clone(), node.id.clone())
+                            } else {
+                                (node.id.clone(), source_id.clone())
+                            };
                             if !edge_set.contains(&key) {
                                 edge_set.insert(key);
                                 edges.push(BrainEdge {
@@ -475,7 +532,11 @@ pub fn get_graph_data(project_path: &str) -> BrainGraphData {
 /// Finds all files and notes that reference a target file or note.
 pub fn get_backlinks(project_path: &str, target_path: &str) -> Vec<BacklinkItem> {
     let mut backlinks = Vec::new();
-    let target_name = Path::new(target_path).file_name().unwrap_or_default().to_string_lossy().to_string();
+    let target_name = Path::new(target_path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     let target_stem = target_name.trim_end_matches(".md");
 
     let walker = WalkBuilder::new(project_path)
@@ -487,20 +548,32 @@ pub fn get_backlinks(project_path: &str, target_path: &str) -> Vec<BacklinkItem>
         let path = result.path();
         if path.is_file() {
             let path_str = path.to_string_lossy().to_string();
-            if path_str.contains(".git") || path_str.contains("node_modules") 
-                || path_str.contains("target") || path_str.contains("dist") || path_str == target_path {
+            if path_str.contains(".git")
+                || path_str.contains("node_modules")
+                || path_str.contains("target")
+                || path_str.contains("dist")
+                || path_str == target_path
+            {
                 continue;
             }
 
             if let Ok(content) = fs::read_to_string(path) {
                 for (idx, line) in content.lines().enumerate() {
                     let trimmed = line.trim();
-                    if trimmed.contains(&format!("[[{}]]", target_name)) 
+                    if trimmed.contains(&format!("[[{}]]", target_name))
                         || trimmed.contains(&format!("[[{}]]", target_stem))
-                        || (trimmed.contains(&target_name) && (trimmed.starts_with("import ") || trimmed.starts_with("use ") || trimmed.starts_with("#include "))) {
+                        || (trimmed.contains(&target_name)
+                            && (trimmed.starts_with("import ")
+                                || trimmed.starts_with("use ")
+                                || trimmed.starts_with("#include ")))
+                    {
                         backlinks.push(BacklinkItem {
                             source_path: path_str.clone(),
-                            source_name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                            source_name: path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string(),
                             line_number: idx + 1,
                             line_content: trimmed.to_string(),
                         });
@@ -520,30 +593,42 @@ pub fn get_backlinks(project_path: &str, target_path: &str) -> Vec<BacklinkItem>
 pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::Value, String> {
     match action {
         "list_notes" => {
-            let project_path = payload.get("project_path").and_then(|v| v.as_str())
+            let project_path = payload
+                .get("project_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'project_path'")?;
             let notes = list_notes(project_path);
             serde_json::to_value(notes).map_err(|e| e.to_string())
         }
         "create_note" => {
-            let project_path = payload.get("project_path").and_then(|v| v.as_str())
+            let project_path = payload
+                .get("project_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'project_path'")?;
-            let title = payload.get("title").and_then(|v| v.as_str())
+            let title = payload
+                .get("title")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'title'")?;
             let content = payload.get("content").and_then(|v| v.as_str());
             let note = create_note(project_path, title, content)?;
             serde_json::to_value(note).map_err(|e| e.to_string())
         }
         "save_note" => {
-            let path_str = payload.get("path").and_then(|v| v.as_str())
+            let path_str = payload
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'path'")?;
-            let content = payload.get("content").and_then(|v| v.as_str())
+            let content = payload
+                .get("content")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'content'")?;
             fs::write(path_str, content).map_err(|e| format!("Failed to save note: {e}"))?;
             Ok(serde_json::json!({ "saved": true }))
         }
         "delete_note" => {
-            let path_str = payload.get("path").and_then(|v| v.as_str())
+            let path_str = payload
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'path'")?;
             if Path::new(path_str).exists() {
                 fs::remove_file(path_str).map_err(|e| format!("Failed to delete note: {e}"))?;
@@ -551,21 +636,29 @@ pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::V
             Ok(serde_json::json!({ "deleted": true }))
         }
         "get_graph" => {
-            let project_path = payload.get("project_path").and_then(|v| v.as_str())
+            let project_path = payload
+                .get("project_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'project_path'")?;
             let graph_data = get_graph_data(project_path);
             serde_json::to_value(graph_data).map_err(|e| e.to_string())
         }
         "get_backlinks" => {
-            let project_path = payload.get("project_path").and_then(|v| v.as_str())
+            let project_path = payload
+                .get("project_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'project_path'")?;
-            let target_path = payload.get("target_path").and_then(|v| v.as_str())
+            let target_path = payload
+                .get("target_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'target_path'")?;
             let backlinks = get_backlinks(project_path, target_path);
             serde_json::to_value(backlinks).map_err(|e| e.to_string())
         }
         "sync_ai_bridges" => {
-            let project_path = payload.get("project_path").and_then(|v| v.as_str())
+            let project_path = payload
+                .get("project_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'project_path'")?;
             sync_universal_ai_brain_bridges(project_path)?;
             Ok(serde_json::json!({

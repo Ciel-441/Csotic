@@ -24,17 +24,22 @@ pub fn analyze_performance(active_files: &[String], project_path: &str) -> Vec<S
 
             // Check for React unnecessary renders
             if (file.ends_with(".tsx") || file.ends_with(".jsx"))
-                && content.contains("useEffect(() => {") && !content.contains("}, [") {
-                    warnings.push(format!("PERFORMANCE RISK: `useEffect` missing dependency array in `{}`. This will trigger unnecessary renders on every update.", file));
-                }
-            
+                && content.contains("useEffect(() => {")
+                && !content.contains("}, [")
+            {
+                warnings.push(format!("PERFORMANCE RISK: `useEffect` missing dependency array in `{}`. This will trigger unnecessary renders on every update.", file));
+            }
+
             // Check for basic N+1 queries
             if content.contains("SELECT ") && for_count > 0 {
-                warnings.push(format!("PERFORMANCE RISK: Potential N+1 query detected inside a loop in `{}`.", file));
+                warnings.push(format!(
+                    "PERFORMANCE RISK: Potential N+1 query detected inside a loop in `{}`.",
+                    file
+                ));
             }
         }
     }
-    
+
     // limit warnings to top 10 to avoid token bloat
     warnings.into_iter().take(10).collect()
 }

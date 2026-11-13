@@ -1,6 +1,6 @@
+use crate::services::symbols::extract_symbols;
 use std::fs;
 use std::path::Path;
-use crate::services::symbols::extract_symbols;
 
 pub fn analyze_refactoring(active_files: &[String], project_path: &str) -> Vec<String> {
     let mut recommendations = Vec::new();
@@ -9,7 +9,7 @@ pub fn analyze_refactoring(active_files: &[String], project_path: &str) -> Vec<S
         let full_path = Path::new(project_path).join(file);
         if let Ok(content) = fs::read_to_string(&full_path) {
             let lines = content.lines().count();
-            
+
             // 1. God File Heuristic
             if lines > 400 {
                 recommendations.push(format!("REFACTORING TARGET: `{}` is over 400 lines (God File). Consider splitting it into smaller, focused modules.", file));
@@ -29,6 +29,6 @@ pub fn analyze_refactoring(active_files: &[String], project_path: &str) -> Vec<S
             }
         }
     }
-    
+
     recommendations.into_iter().take(10).collect()
 }

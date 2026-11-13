@@ -1,6 +1,6 @@
-use std::path::Path;
-use serde::{Deserialize, Serialize};
 use ignore::WalkBuilder;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ProjectType {
@@ -60,11 +60,18 @@ impl ProjectDetector {
         let is_git = root.join(".git").exists();
         let has_package_json = root.join("package.json").is_file();
         let has_cargo_toml = root.join("Cargo.toml").is_file();
-        let has_pyproject = root.join("pyproject.toml").is_file() || root.join("requirements.txt").is_file() || root.join("Pipfile").is_file();
+        let has_pyproject = root.join("pyproject.toml").is_file()
+            || root.join("requirements.txt").is_file()
+            || root.join("Pipfile").is_file();
         let has_go_mod = root.join("go.mod").is_file();
-        let has_tauri_conf = root.join("src-tauri").join("tauri.conf.json").is_file() || root.join("tauri.conf.json").is_file();
-        let has_vite = root.join("vite.config.ts").is_file() || root.join("vite.config.js").is_file() || root.join("vite.config.mjs").is_file();
-        let has_next = root.join("next.config.js").is_file() || root.join("next.config.mjs").is_file() || root.join("next.config.ts").is_file();
+        let has_tauri_conf = root.join("src-tauri").join("tauri.conf.json").is_file()
+            || root.join("tauri.conf.json").is_file();
+        let has_vite = root.join("vite.config.ts").is_file()
+            || root.join("vite.config.js").is_file()
+            || root.join("vite.config.mjs").is_file();
+        let has_next = root.join("next.config.js").is_file()
+            || root.join("next.config.mjs").is_file()
+            || root.join("next.config.ts").is_file();
         let has_svelte = root.join("svelte.config.js").is_file();
 
         // Scan files & directories using ignore walker (respects .gitignore)
@@ -85,13 +92,21 @@ impl ProjectDetector {
             }
 
             let path_str = path.to_string_lossy();
-            if path_str.contains(".git") || path_str.contains("node_modules") 
-                || path_str.contains("target") || path_str.contains(".next") 
-                || path_str.contains("dist") || path_str.contains(".cargo") {
+            if path_str.contains(".git")
+                || path_str.contains("node_modules")
+                || path_str.contains("target")
+                || path_str.contains(".next")
+                || path_str.contains("dist")
+                || path_str.contains(".cargo")
+            {
                 continue;
             }
 
-            let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
 
             if path.is_dir() {
                 dir_count += 1;
@@ -103,7 +118,13 @@ impl ProjectDetector {
             }
         }
 
-        let project_exists = file_count > 0 && (has_package_json || has_cargo_toml || has_pyproject || has_go_mod || is_git || file_count >= 3);
+        let project_exists = file_count > 0
+            && (has_package_json
+                || has_cargo_toml
+                || has_pyproject
+                || has_go_mod
+                || is_git
+                || file_count >= 3);
 
         // Determine Package Manager
         let package_manager = if root.join("pnpm-lock.yaml").is_file() {
@@ -140,7 +161,10 @@ impl ProjectDetector {
         } else if has_go_mod {
             (ProjectType::Go, "Go Project".to_string())
         } else if has_package_json {
-            (ProjectType::Node, "Node.js / JavaScript Project".to_string())
+            (
+                ProjectType::Node,
+                "Node.js / JavaScript Project".to_string(),
+            )
         } else if !project_exists {
             (ProjectType::Empty, "Empty Workspace".to_string())
         } else {
@@ -149,11 +173,26 @@ impl ProjectDetector {
 
         // Discover Entry Points
         let potential_entries = [
-            "src/main.tsx", "src/main.ts", "src/main.jsx", "src/main.js",
-            "src/index.tsx", "src/index.ts", "src/index.jsx", "src/index.js",
-            "src/App.tsx", "src/App.jsx", "src/App.vue",
-            "src/main.rs", "src/lib.rs", "src-tauri/src/main.rs", "src-tauri/src/lib.rs",
-            "main.py", "app.py", "index.js", "main.go", "index.html"
+            "src/main.tsx",
+            "src/main.ts",
+            "src/main.jsx",
+            "src/main.js",
+            "src/index.tsx",
+            "src/index.ts",
+            "src/index.jsx",
+            "src/index.js",
+            "src/App.tsx",
+            "src/App.jsx",
+            "src/App.vue",
+            "src/main.rs",
+            "src/lib.rs",
+            "src-tauri/src/main.rs",
+            "src-tauri/src/lib.rs",
+            "main.py",
+            "app.py",
+            "index.js",
+            "main.go",
+            "index.html",
         ];
         let mut entry_points = Vec::new();
         for entry in potential_entries {
@@ -164,9 +203,20 @@ impl ProjectDetector {
 
         // Discover Important Config / Architecture Files
         let potential_configs = [
-            "package.json", "Cargo.toml", "tsconfig.json", "vite.config.ts", "vite.config.js",
-            "next.config.js", "next.config.mjs", "tauri.conf.json", "src-tauri/tauri.conf.json",
-            "tailwind.config.js", "tailwind.config.ts", "README.md", ".env.example", ".env"
+            "package.json",
+            "Cargo.toml",
+            "tsconfig.json",
+            "vite.config.ts",
+            "vite.config.js",
+            "next.config.js",
+            "next.config.mjs",
+            "tauri.conf.json",
+            "src-tauri/tauri.conf.json",
+            "tailwind.config.js",
+            "tailwind.config.ts",
+            "README.md",
+            ".env.example",
+            ".env",
         ];
         let mut important_files = Vec::new();
         for cfg in potential_configs {
@@ -208,37 +258,98 @@ impl ProjectDetector {
             return false;
         }
 
-        let clean_path = relative_path.trim().replace('\\', "/").trim_start_matches('/').to_string();
+        let clean_path = relative_path
+            .trim()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
 
         // 1. Root configuration manifests and entry points that already exist
         let core_manifests = [
-            "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock",
-            "Cargo.toml", "Cargo.lock", "pyproject.toml", "requirements.txt", "Pipfile", "go.mod", "go.sum",
-            "pom.xml", "build.gradle", "Gemfile", "composer.json", "deno.json",
-            "tsconfig.json", "jsconfig.json", "vite.config.ts", "vite.config.js", "vite.config.mjs",
-            "next.config.js", "next.config.mjs", "next.config.ts", "svelte.config.js",
-            "tauri.conf.json", "src-tauri/tauri.conf.json", "tailwind.config.js", "tailwind.config.ts",
-            "index.html", "src/main.tsx", "src/main.ts", "src/main.jsx", "src/main.js",
-            "src/index.tsx", "src/index.ts", "src/index.jsx", "src/index.js",
-            "src/App.tsx", "src/App.jsx", "src/App.vue", "src/main.rs", "src/lib.rs"
+            "package.json",
+            "package-lock.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "bun.lockb",
+            "bun.lock",
+            "Cargo.toml",
+            "Cargo.lock",
+            "pyproject.toml",
+            "requirements.txt",
+            "Pipfile",
+            "go.mod",
+            "go.sum",
+            "pom.xml",
+            "build.gradle",
+            "Gemfile",
+            "composer.json",
+            "deno.json",
+            "tsconfig.json",
+            "jsconfig.json",
+            "vite.config.ts",
+            "vite.config.js",
+            "vite.config.mjs",
+            "next.config.js",
+            "next.config.mjs",
+            "next.config.ts",
+            "svelte.config.js",
+            "tauri.conf.json",
+            "src-tauri/tauri.conf.json",
+            "tailwind.config.js",
+            "tailwind.config.ts",
+            "index.html",
+            "src/main.tsx",
+            "src/main.ts",
+            "src/main.jsx",
+            "src/main.js",
+            "src/index.tsx",
+            "src/index.ts",
+            "src/index.jsx",
+            "src/index.js",
+            "src/App.tsx",
+            "src/App.jsx",
+            "src/App.vue",
+            "src/main.rs",
+            "src/lib.rs",
         ];
 
         for core in core_manifests {
-            if clean_path.eq_ignore_ascii_case(core) && (state.important_files.iter().any(|f| f.eq_ignore_ascii_case(core)) || state.entry_points.iter().any(|f| f.eq_ignore_ascii_case(core))) {
+            if clean_path.eq_ignore_ascii_case(core)
+                && (state
+                    .important_files
+                    .iter()
+                    .any(|f| f.eq_ignore_ascii_case(core))
+                    || state
+                        .entry_points
+                        .iter()
+                        .any(|f| f.eq_ignore_ascii_case(core)))
+            {
                 return true;
             }
         }
 
         // 2. Nested duplicate project root (e.g. workspace already has a project, but AI creates 'app/package.json', 'client/Cargo.toml', etc.)
         let known_submanifests = [
-            "package.json", "Cargo.toml", "pyproject.toml", "go.mod", "pom.xml", "build.gradle",
-            "vite.config.ts", "vite.config.js", "next.config.js", "next.config.mjs", "tsconfig.json"
+            "package.json",
+            "Cargo.toml",
+            "pyproject.toml",
+            "go.mod",
+            "pom.xml",
+            "build.gradle",
+            "vite.config.ts",
+            "vite.config.js",
+            "next.config.js",
+            "next.config.mjs",
+            "tsconfig.json",
         ];
 
         let parts: Vec<&str> = clean_path.split('/').collect();
         if parts.len() >= 2 {
             let last = parts[parts.len() - 1];
-            if known_submanifests.iter().any(|m| last.eq_ignore_ascii_case(m)) {
+            if known_submanifests
+                .iter()
+                .any(|m| last.eq_ignore_ascii_case(m))
+            {
                 // If the root already has this type of manifest (e.g. root has package.json and AI proposes subfolder/package.json)
                 if state.important_files.iter().any(|f| f.ends_with(last)) {
                     return true;
@@ -255,13 +366,17 @@ impl ProjectDetector {
         proposed_path: &str,
         proposed_content: Option<&str>,
     ) -> Option<(String, String)> {
-        let proposed_clean = proposed_path.trim().replace('\\', "/").trim_start_matches('/').to_string();
+        let proposed_clean = proposed_path
+            .trim()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
         let proposed_raw_stem = std::path::Path::new(&proposed_clean)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("");
         let proposed_stem = proposed_raw_stem.to_lowercase();
-        
+
         if proposed_stem.len() < 3 {
             return None;
         }
@@ -293,12 +408,59 @@ impl ProjectDetector {
 
         // Extended domain semantic clusters
         let clusters: &[&[&str]] = &[
-            &["auth", "authentication", "login", "signin", "signup", "user", "session", "credential", "account", "identity", "token", "jwt", "pass"],
-            &["state", "store", "context", "provider", "reducer", "atom", "slice"],
-            &["service", "client", "api", "handler", "manager", "controller", "adapter", "facade", "agent", "orchestrator", "worker"],
-            &["route", "router", "navigation", "nav", "view", "page", "screen"],
-            &["database", "db", "repository", "dao", "store", "model", "schema", "entity"],
-            &["util", "utils", "helper", "helpers", "lib", "common", "shared", "core"],
+            &[
+                "auth",
+                "authentication",
+                "login",
+                "signin",
+                "signup",
+                "user",
+                "session",
+                "credential",
+                "account",
+                "identity",
+                "token",
+                "jwt",
+                "pass",
+            ],
+            &[
+                "state", "store", "context", "provider", "reducer", "atom", "slice",
+            ],
+            &[
+                "service",
+                "client",
+                "api",
+                "handler",
+                "manager",
+                "controller",
+                "adapter",
+                "facade",
+                "agent",
+                "orchestrator",
+                "worker",
+            ],
+            &[
+                "route",
+                "router",
+                "navigation",
+                "nav",
+                "view",
+                "page",
+                "screen",
+            ],
+            &[
+                "database",
+                "db",
+                "repository",
+                "dao",
+                "store",
+                "model",
+                "schema",
+                "entity",
+            ],
+            &[
+                "util", "utils", "helper", "helpers", "lib", "common", "shared", "core",
+            ],
             &["config", "settings", "options", "env", "environment"],
             &["cache", "buffer", "storage", "pool", "vault"],
         ];
@@ -317,7 +479,11 @@ impl ProjectDetector {
             if existing.eq_ignore_ascii_case(&proposed_clean) {
                 continue;
             }
-            let existing_clean = existing.trim().replace('\\', "/").trim_start_matches('/').to_string();
+            let existing_clean = existing
+                .trim()
+                .replace('\\', "/")
+                .trim_start_matches('/')
+                .to_string();
             let existing_raw_stem = std::path::Path::new(&existing_clean)
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -331,16 +497,22 @@ impl ProjectDetector {
             let existing_words = extract_words(existing_raw_stem);
 
             // 1. Direct prefix / abbreviation match (e.g. AuthProvider vs AuthenticationProvider)
-            let is_abbr_match = (existing_stem.starts_with("auth") && proposed_stem.starts_with("authentication"))
-                || (proposed_stem.starts_with("auth") && existing_stem.starts_with("authentication"));
+            let is_abbr_match = (existing_stem.starts_with("auth")
+                && proposed_stem.starts_with("authentication"))
+                || (proposed_stem.starts_with("auth")
+                    && existing_stem.starts_with("authentication"));
 
             // 2. Shared root words & semantic synonym cluster matches
             let mut shared = 0;
             let mut matched_terms = Vec::new();
             for pw in &proposed_words {
                 for ew in &existing_words {
-                    let is_exact = pw == ew || (pw.starts_with(ew) && ew.len() >= 4) || (ew.starts_with(pw) && pw.len() >= 4);
-                    let is_synonym = clusters.iter().any(|c| c.contains(&pw.as_str()) && c.contains(&ew.as_str()));
+                    let is_exact = pw == ew
+                        || (pw.starts_with(ew) && ew.len() >= 4)
+                        || (ew.starts_with(pw) && pw.len() >= 4);
+                    let is_synonym = clusters
+                        .iter()
+                        .any(|c| c.contains(&pw.as_str()) && c.contains(&ew.as_str()));
                     if is_exact || is_synonym {
                         shared += 1;
                         matched_terms.push(format!("{pw}~{ew}"));
@@ -350,23 +522,38 @@ impl ProjectDetector {
             }
 
             if is_abbr_match {
-                return Some((existing.clone(), format!("Prefix / abbreviation match: '{}' vs '{}'", proposed_stem, existing_stem)));
+                return Some((
+                    existing.clone(),
+                    format!(
+                        "Prefix / abbreviation match: '{}' vs '{}'",
+                        proposed_stem, existing_stem
+                    ),
+                ));
             }
 
             if shared >= 2 && shared >= proposed_words.len().min(existing_words.len()) {
                 return Some((
                     existing.clone(),
-                    format!("Shared domain responsibility (matches: {})", matched_terms.join(", "))
+                    format!(
+                        "Shared domain responsibility (matches: {})",
+                        matched_terms.join(", ")
+                    ),
                 ));
             }
 
             // 3. Symbol / identifier overlap if proposed symbols are extracted
             if !proposed_symbols.is_empty() {
-                let symbol_matches: Vec<_> = proposed_symbols.iter()
+                let symbol_matches: Vec<_> = proposed_symbols
+                    .iter()
                     .filter(|sym| {
                         let sym_lower = sym.to_lowercase();
-                        existing_words.iter().any(|ew| sym_lower.contains(ew) || ew.contains(&sym_lower))
-                            || clusters.iter().any(|c| c.iter().any(|w| sym_lower.contains(w)) && c.iter().any(|w| existing_stem.contains(w)))
+                        existing_words
+                            .iter()
+                            .any(|ew| sym_lower.contains(ew) || ew.contains(&sym_lower))
+                            || clusters.iter().any(|c| {
+                                c.iter().any(|w| sym_lower.contains(w))
+                                    && c.iter().any(|w| existing_stem.contains(w))
+                            })
                     })
                     .cloned()
                     .collect();
@@ -374,7 +561,10 @@ impl ProjectDetector {
                 if symbol_matches.len() >= 2 || (symbol_matches.len() == 1 && shared >= 1) {
                     return Some((
                         existing.clone(),
-                        format!("Symbol and responsibility overlap (symbols: [{}])", symbol_matches.join(", "))
+                        format!(
+                            "Symbol and responsibility overlap (symbols: [{}])",
+                            symbol_matches.join(", ")
+                        ),
                     ));
                 }
             }
@@ -386,6 +576,7 @@ impl ProjectDetector {
     /// Checks for semantic duplication against existing project components (e.g. AuthProvider.tsx vs AuthenticationProvider.tsx)
     #[allow(dead_code)]
     pub fn find_semantic_duplication(state: &ProjectState, proposed_path: &str) -> Option<String> {
-        Self::find_semantic_duplication_with_content(state, proposed_path, None).map(|(file, _)| file)
+        Self::find_semantic_duplication_with_content(state, proposed_path, None)
+            .map(|(file, _)| file)
     }
 }

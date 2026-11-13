@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
-use std::fs;
-use std::sync::{Mutex, OnceLock};
-use std::num::NonZeroUsize;
 use lru::LruCache;
+use std::fs;
+use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 fn file_cache() -> &'static Mutex<LruCache<String, String>> {
     static CACHE: OnceLock<Mutex<LruCache<String, String>>> = OnceLock::new();
@@ -13,7 +13,10 @@ fn file_cache() -> &'static Mutex<LruCache<String, String>> {
 }
 
 fn cache_get(key: &str) -> Option<String> {
-    file_cache().lock().ok().and_then(|mut c| c.get(key).cloned())
+    file_cache()
+        .lock()
+        .ok()
+        .and_then(|mut c| c.get(key).cloned())
 }
 
 fn cache_put(key: String, content: String) {
@@ -77,7 +80,8 @@ pub fn safe_resolve(project_path: &str, raw_path: &str) -> Result<PathBuf, Strin
         return absolute_resolve(&clean_raw);
     }
 
-    let base_canon = PathBuf::from(&clean_proj).canonicalize()
+    let base_canon = PathBuf::from(&clean_proj)
+        .canonicalize()
         .map_err(|e| format!("Invalid project path: {e}"))?;
     if !base_canon.is_dir() {
         return Err("Active project path is not a directory".to_string());
@@ -98,10 +102,13 @@ pub fn safe_resolve(project_path: &str, raw_path: &str) -> Result<PathBuf, Strin
         match comp {
             std::path::Component::Prefix(p) => normalized.push(p.as_os_str()),
             std::path::Component::RootDir => normalized.push(comp.as_os_str()),
-            std::path::Component::CurDir => {},
+            std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
                 if !normalized.pop() {
-                    return Err(format!("Path traversal blocked: {} escapes project root", raw_path));
+                    return Err(format!(
+                        "Path traversal blocked: {} escapes project root",
+                        raw_path
+                    ));
                 }
             }
             std::path::Component::Normal(c) => normalized.push(c),
@@ -110,12 +117,20 @@ pub fn safe_resolve(project_path: &str, raw_path: &str) -> Result<PathBuf, Strin
 
     // Now canonicalize normalized path if it exists, or canonicalize its parent if it doesn't
     let canonical = if normalized.exists() {
-        normalized.canonicalize().map_err(|e| format!("Path error: {e}"))?
+        normalized
+            .canonicalize()
+            .map_err(|e| format!("Path error: {e}"))?
     } else {
-        let parent = normalized.parent().ok_or_else(|| "Invalid filesystem path".to_string())?;
+        let parent = normalized
+            .parent()
+            .ok_or_else(|| "Invalid filesystem path".to_string())?;
         if parent.exists() {
-            let parent_canon = parent.canonicalize().map_err(|e| format!("Path error: {e}"))?;
-            let file_name = normalized.file_name().ok_or_else(|| "Invalid file name".to_string())?;
+            let parent_canon = parent
+                .canonicalize()
+                .map_err(|e| format!("Path error: {e}"))?;
+            let file_name = normalized
+                .file_name()
+                .ok_or_else(|| "Invalid file name".to_string())?;
             parent_canon.join(file_name)
         } else {
             normalized.clone()
@@ -125,7 +140,10 @@ pub fn safe_resolve(project_path: &str, raw_path: &str) -> Result<PathBuf, Strin
     let clean_target = PathBuf::from(strip_unc_prefix(&canonical.to_string_lossy()));
 
     if !clean_target.starts_with(&clean_base) {
-        return Err(format!("Path traversal blocked: {} escapes project root", raw_path));
+        return Err(format!(
+            "Path traversal blocked: {} escapes project root",
+            raw_path
+        ));
     }
 
     Ok(clean_target)
@@ -139,17 +157,29 @@ pub enum MutationActor {
     Agent { task_id: String },
 }
 
-pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Option<&str>, permission_profile: Option<&str>) -> Result<serde_json::Value, String> {
+pub async fn handle(
+    action: &str,
+    payload: &serde_json::Value,
+    _project_path: Option<&str>,
+    permission_profile: Option<&str>,
+) -> Result<serde_json::Value, String> {
     let pp = _project_path.unwrap_or("");
     let profile = permission_profile.unwrap_or("developer");
 
-    let is_mutation = matches!(action, "write_file" | "create_dir" | "patch_file" | "delete" | "rename" | "copy_file");
+    let is_mutation = matches!(
+        action,
+        "write_file" | "create_dir" | "patch_file" | "delete" | "rename" | "copy_file"
+    );
     if is_mutation && profile == "read_only" {
-        return Err(format!("Permission denied: active profile is 'read_only', action '{action}' is blocked."));
+        return Err(format!(
+            "Permission denied: active profile is 'read_only', action '{action}' is blocked."
+        ));
     }
 
     let actor = if let Some(task_id) = payload.get("agent_task_id").and_then(|v| v.as_str()) {
-        MutationActor::Agent { task_id: task_id.to_string() }
+        MutationActor::Agent {
+            task_id: task_id.to_string(),
+        }
     } else {
         MutationActor::User
     };
@@ -165,7 +195,9 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
 
     match action {
         "read_dir" => {
-            let path = payload.get("path").and_then(|v| v.as_str())
+            let path = payload
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'path'")?;
             let resolved = safe_resolve(pp, path)?;
             let mut entries = Vec::new();
@@ -195,7 +227,9 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
             Ok(serde_json::json!({ "entries": entries }))
         }
         "read_file" => {
-            let path = payload.get("path").and_then(|v| v.as_str())
+            let path = payload
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'path'")?;
             let resolved = safe_resolve(pp, path)?;
             if !resolved.exists() {
@@ -203,16 +237,24 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
             }
             let meta = fs::metadata(&resolved).map_err(|e| format!("File not found: {e}"))?;
             if meta.len() > MAX_FILE_SIZE {
-                return Err(format!("File too large ({} bytes, max {})", meta.len(), MAX_FILE_SIZE));
+                return Err(format!(
+                    "File too large ({} bytes, max {})",
+                    meta.len(),
+                    MAX_FILE_SIZE
+                ));
             }
             let content = fs::read_to_string(&resolved)
                 .map_err(|_| "File is not valid UTF-8 (binary file?)".to_string())?;
             Ok(serde_json::json!({ "content": content }))
         }
         "write_file" => {
-            let path = payload.get("path").and_then(|v| v.as_str())
+            let path = payload
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'path'")?;
-            let content = payload.get("content").and_then(|v| v.as_str())
+            let content = payload
+                .get("content")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'content'")?;
             let resolved = safe_resolve(pp, path)?;
             if let Some(parent) = resolved.parent() {
@@ -225,26 +267,38 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
             let key = resolved.to_string_lossy().to_string();
             cache_put(key, content.to_string());
             let hash = compute_sha256(content);
-            Ok(serde_json::json!({ "written": true, "bytes": bytes, "hash": hash, "path": resolved.to_string_lossy() }))
+            Ok(
+                serde_json::json!({ "written": true, "bytes": bytes, "hash": hash, "path": resolved.to_string_lossy() }),
+            )
         }
         "create_dir" => {
-            let path = payload.get("path").and_then(|v| v.as_str())
+            let path = payload
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'path'")?;
             create_dir_strict(pp, path)?;
             Ok(serde_json::json!({ "created": true }))
         }
         "rename" => {
-            let old_path = payload.get("old_path").and_then(|v| v.as_str())
+            let old_path = payload
+                .get("old_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'old_path'")?;
-            let new_path = payload.get("new_path").and_then(|v| v.as_str())
+            let new_path = payload
+                .get("new_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'new_path'")?;
             move_file_strict(pp, old_path, new_path)?;
             Ok(serde_json::json!({ "renamed": true, "old_path": old_path, "new_path": new_path }))
         }
         "copy_file" => {
-            let src_path = payload.get("src_path").and_then(|v| v.as_str())
+            let src_path = payload
+                .get("src_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'src_path'")?;
-            let dest_path = payload.get("dest_path").and_then(|v| v.as_str())
+            let dest_path = payload
+                .get("dest_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'dest_path'")?;
             copy_file_strict(pp, src_path, dest_path)?;
             Ok(serde_json::json!({ "copied": true }))
@@ -254,7 +308,9 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
             if clean_pp.trim().is_empty() {
                 return Ok(serde_json::json!({ "files": [] }));
             }
-            let base_path = PathBuf::from(&clean_pp).canonicalize().map_err(|e| format!("Invalid path: {e}"))?;
+            let base_path = PathBuf::from(&clean_pp)
+                .canonicalize()
+                .map_err(|e| format!("Invalid path: {e}"))?;
             let clean_base_path = PathBuf::from(strip_unc_prefix(&base_path.to_string_lossy()));
             let mut files = Vec::new();
             let walker = ignore::WalkBuilder::new(&clean_base_path)
@@ -272,16 +328,23 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
                     continue;
                 }
                 let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-                let rel_path = clean_entry.strip_prefix(&clean_base_path)
+                let rel_path = clean_entry
+                    .strip_prefix(&clean_base_path)
                     .map(|p| p.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_else(|_| clean_entry.to_string_lossy().to_string());
-                
+
                 // Skip noisy dependency and build directories
-                if rel_path.starts_with(".git/") || rel_path == ".git"
-                    || rel_path.starts_with("node_modules/") || rel_path == "node_modules"
-                    || rel_path.starts_with("target/") || rel_path == "target"
-                    || rel_path.starts_with(".next/") || rel_path == ".next"
-                    || rel_path.starts_with("dist/") || rel_path == "dist" {
+                if rel_path.starts_with(".git/")
+                    || rel_path == ".git"
+                    || rel_path.starts_with("node_modules/")
+                    || rel_path == "node_modules"
+                    || rel_path.starts_with("target/")
+                    || rel_path == "target"
+                    || rel_path.starts_with(".next/")
+                    || rel_path == ".next"
+                    || rel_path.starts_with("dist/")
+                    || rel_path == "dist"
+                {
                     continue;
                 }
 
@@ -303,8 +366,13 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
             if query.trim().is_empty() {
                 return Ok(serde_json::json!({ "matches": [] }));
             }
-            let case_sensitive = payload.get("case_sensitive").and_then(|v| v.as_bool()).unwrap_or(false);
-            let base_path = PathBuf::from(&clean_pp).canonicalize().map_err(|e| format!("Invalid path: {e}"))?;
+            let case_sensitive = payload
+                .get("case_sensitive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let base_path = PathBuf::from(&clean_pp)
+                .canonicalize()
+                .map_err(|e| format!("Invalid path: {e}"))?;
             let clean_base = PathBuf::from(strip_unc_prefix(&base_path.to_string_lossy()));
             let mut matches = Vec::new();
             let walker = ignore::WalkBuilder::new(&clean_base)
@@ -328,7 +396,8 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
                             }
                         }
                         if let Ok(content) = fs::read_to_string(path) {
-                            let rel_path = path.strip_prefix(&base_path)
+                            let rel_path = path
+                                .strip_prefix(&base_path)
                                 .map(|p| p.to_string_lossy().replace('\\', "/"))
                                 .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
@@ -358,27 +427,42 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
             Ok(serde_json::json!({ "matches": matches, "total": total_matches }))
         }
         "patch_file" => {
-            let path = payload.get("path").and_then(|v| v.as_str())
+            let path = payload
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'path'")?;
-            let target = payload.get("target").and_then(|v| v.as_str())
+            let target = payload
+                .get("target")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'target'")?;
-            let replacement = payload.get("replacement").and_then(|v| v.as_str())
+            let replacement = payload
+                .get("replacement")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'replacement'")?;
-            let expected_hash = payload.get("expected_hash").and_then(|v| v.as_str()).unwrap_or("");
-            let (_old, _new, hash) = patch_file_strict(pp, path, expected_hash, target, replacement)?;
+            let expected_hash = payload
+                .get("expected_hash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let (_old, _new, hash) =
+                patch_file_strict(pp, path, expected_hash, target, replacement)?;
             Ok(serde_json::json!({ "patched": true, "hash": hash }))
         }
         "delete" => {
-            let path = payload.get("path").and_then(|v| v.as_str())
+            let path = payload
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'path'")?;
-            let approved = payload.get("approved").and_then(|v| v.as_bool()).unwrap_or(false);
+            let approved = payload
+                .get("approved")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             delete_file_strict(pp, path, approved)?;
             Ok(serde_json::json!({ "deleted": true }))
         }
         "select_folder" => {
-            let path_opt = tokio::task::spawn_blocking(|| {
-                rfd::FileDialog::new().pick_folder()
-            }).await.map_err(|e| format!("Dialog thread error: {e}"))?;
+            let path_opt = tokio::task::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
+                .await
+                .map_err(|e| format!("Dialog thread error: {e}"))?;
 
             if let Some(folder) = path_opt {
                 let clean = strip_unc_prefix(&folder.to_string_lossy());
@@ -388,25 +472,38 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
             }
         }
         "select_files" => {
-            let files_opt = tokio::task::spawn_blocking(|| {
-                rfd::FileDialog::new().pick_files()
-            }).await.map_err(|e| format!("Dialog thread error: {e}"))?;
+            let files_opt = tokio::task::spawn_blocking(|| rfd::FileDialog::new().pick_files())
+                .await
+                .map_err(|e| format!("Dialog thread error: {e}"))?;
 
             if let Some(files) = files_opt {
-                let paths: Vec<String> = files.iter().map(|f| strip_unc_prefix(&f.to_string_lossy())).collect();
+                let paths: Vec<String> = files
+                    .iter()
+                    .map(|f| strip_unc_prefix(&f.to_string_lossy()))
+                    .collect();
                 Ok(serde_json::json!({ "paths": paths }))
             } else {
                 Ok(serde_json::json!({ "paths": Vec::<String>::new() }))
             }
         }
         "save_as_dialog" => {
-            let default_name = payload.get("default_name").and_then(|v| v.as_str()).unwrap_or("untitled.txt").to_string();
-            let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let default_name = payload
+                .get("default_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("untitled.txt")
+                .to_string();
+            let content = payload
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let path_opt = tokio::task::spawn_blocking(move || {
                 rfd::FileDialog::new()
                     .set_file_name(&default_name)
                     .save_file()
-            }).await.map_err(|e| format!("Dialog thread error: {e}"))?;
+            })
+            .await
+            .map_err(|e| format!("Dialog thread error: {e}"))?;
 
             if let Some(path) = path_opt {
                 fs::write(&path, &content).map_err(|e| format!("Save failed: {e}"))?;
@@ -417,19 +514,26 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
             }
         }
         "open_file_dialog" => {
-            let path_opt = tokio::task::spawn_blocking(|| {
-                rfd::FileDialog::new().pick_file()
-            }).await.map_err(|e| format!("Dialog thread error: {e}"))?;
+            let path_opt = tokio::task::spawn_blocking(|| rfd::FileDialog::new().pick_file())
+                .await
+                .map_err(|e| format!("Dialog thread error: {e}"))?;
 
             if let Some(path) = path_opt {
                 let meta = fs::metadata(&path).map_err(|e| format!("File error: {e}"))?;
                 if meta.len() > MAX_FILE_SIZE {
-                    return Err(format!("File too large ({} bytes, max {})", meta.len(), MAX_FILE_SIZE));
+                    return Err(format!(
+                        "File too large ({} bytes, max {})",
+                        meta.len(),
+                        MAX_FILE_SIZE
+                    ));
                 }
                 let content = fs::read_to_string(&path)
                     .map_err(|_| "File is not valid UTF-8 (binary file?)".to_string())?;
                 let clean = strip_unc_prefix(&path.to_string_lossy());
-                let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let file_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 Ok(serde_json::json!({
                     "path": clean,
                     "content": content,
@@ -444,7 +548,7 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
 }
 
 pub fn compute_sha256(content: &str) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     format!("{:x}", hasher.finalize())
@@ -473,9 +577,10 @@ pub fn read_file_str(project_path: &str, path: &str) -> Result<String, String> {
     if meta.len() > MAX_FILE_SIZE {
         return Err(format!("File too large ({} bytes)", meta.len()));
     }
-    
-    let content = fs::read_to_string(&resolved).map_err(|_| "File is not valid UTF-8".to_string())?;
-    
+
+    let content =
+        fs::read_to_string(&resolved).map_err(|_| "File is not valid UTF-8".to_string())?;
+
     cache_put(key, content.clone());
     Ok(content)
 }
@@ -494,7 +599,11 @@ pub fn read_file_with_hash(project_path: &str, path: &str) -> Result<(String, St
 /// RollbackJournal recovery pipeline. All standard file creations, modifications, and
 /// patches must go through `ChangeSetEngine::execute_operation_transactional` to preserve
 /// invariant validation, actor boundary checks, and observability.
-pub(crate) fn restore_file_for_rollback(project_path: &str, path: &str, content: &str) -> Result<usize, String> {
+pub(crate) fn restore_file_for_rollback(
+    project_path: &str,
+    path: &str,
+    content: &str,
+) -> Result<usize, String> {
     let resolved = safe_resolve(project_path, path)?;
     let key = resolved.to_string_lossy().to_string();
 
@@ -503,9 +612,9 @@ pub(crate) fn restore_file_for_rollback(project_path: &str, path: &str, content:
     }
     let bytes = content.len();
     fs::write(&resolved, content).map_err(|e| format!("Write failed: {e}"))?;
-    
+
     cache_put(key, content.to_string());
-    
+
     Ok(bytes)
 }
 
@@ -546,7 +655,8 @@ pub fn modify_file_strict(
         ));
     }
 
-    let old_content = fs::read_to_string(&resolved).map_err(|e| format!("Cannot read file: {e}"))?;
+    let old_content =
+        fs::read_to_string(&resolved).map_err(|e| format!("Cannot read file: {e}"))?;
     let current_hash = compute_sha256(&old_content);
 
     if !expected_hash.trim().is_empty() && current_hash != expected_hash.trim() {
@@ -577,7 +687,8 @@ pub fn patch_file_strict(
         return Err(format!("FILE_NOT_FOUND: '{}' does not exist.", path));
     }
 
-    let old_content = fs::read_to_string(&resolved).map_err(|e| format!("Cannot read file: {e}"))?;
+    let old_content =
+        fs::read_to_string(&resolved).map_err(|e| format!("Cannot read file: {e}"))?;
     let current_hash = compute_sha256(&old_content);
 
     if !expected_hash.trim().is_empty() && current_hash != expected_hash.trim() {
@@ -589,7 +700,10 @@ pub fn patch_file_strict(
 
     let count = old_content.matches(target).count();
     if count == 0 {
-        return Err(format!("TARGET_NOT_FOUND: Target text does not appear in '{}'.", path));
+        return Err(format!(
+            "TARGET_NOT_FOUND: Target text does not appear in '{}'.",
+            path
+        ));
     }
     if count > 1 {
         return Err(format!(
@@ -637,10 +751,16 @@ pub fn move_file_strict(project_path: &str, source: &str, destination: &str) -> 
     let resolved_dest = safe_resolve(project_path, destination)?;
 
     if !resolved_src.exists() {
-        return Err(format!("FILE_NOT_FOUND: Source '{}' does not exist.", source));
+        return Err(format!(
+            "FILE_NOT_FOUND: Source '{}' does not exist.",
+            source
+        ));
     }
     if resolved_dest.exists() {
-        return Err(format!("FILE_ALREADY_EXISTS: Destination '{}' already exists.", destination));
+        return Err(format!(
+            "FILE_ALREADY_EXISTS: Destination '{}' already exists.",
+            destination
+        ));
     }
 
     if let Some(parent) = resolved_dest.parent() {
@@ -656,22 +776,33 @@ pub fn move_file_strict(project_path: &str, source: &str, destination: &str) -> 
 }
 
 /// Strict COPY operation: source must exist, destination must not.
-pub fn copy_file_strict(project_path: &str, source: &str, destination: &str) -> Result<String, String> {
+pub fn copy_file_strict(
+    project_path: &str,
+    source: &str,
+    destination: &str,
+) -> Result<String, String> {
     let resolved_src = safe_resolve(project_path, source)?;
     let resolved_dest = safe_resolve(project_path, destination)?;
 
     if !resolved_src.is_file() {
-        return Err(format!("FILE_NOT_FOUND: Source '{}' does not exist.", source));
+        return Err(format!(
+            "FILE_NOT_FOUND: Source '{}' does not exist.",
+            source
+        ));
     }
     if resolved_dest.exists() {
-        return Err(format!("FILE_ALREADY_EXISTS: Destination '{}' already exists.", destination));
+        return Err(format!(
+            "FILE_ALREADY_EXISTS: Destination '{}' already exists.",
+            destination
+        ));
     }
 
     if let Some(parent) = resolved_dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Cannot create parent directory: {e}"))?;
     }
 
-    let src_content = fs::read_to_string(&resolved_src).map_err(|e| format!("Cannot read source file: {e}"))?;
+    let src_content =
+        fs::read_to_string(&resolved_src).map_err(|e| format!("Cannot read source file: {e}"))?;
     fs::copy(&resolved_src, &resolved_dest).map_err(|e| format!("Copy failed: {e}"))?;
 
     let hash = compute_sha256(&src_content);
@@ -704,7 +835,11 @@ pub fn list_dir_str(project_path: &str, path: &str) -> Result<String, String> {
     for entry in read.flatten() {
         let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
         let indicator = if is_dir { "/" } else { "" };
-        result.push_str(&format!("{}{}\n", entry.file_name().to_string_lossy(), indicator));
+        result.push_str(&format!(
+            "{}{}\n",
+            entry.file_name().to_string_lossy(),
+            indicator
+        ));
     }
     Ok(result)
 }
@@ -725,7 +860,10 @@ mod tests {
         let hash3 = compute_sha256("different");
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3);
-        assert_eq!(hash1, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+        assert_eq!(
+            hash1,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
     }
 
     #[test]
@@ -756,7 +894,8 @@ mod tests {
         assert!(stale_res.unwrap_err().contains("HASH_MISMATCH"));
 
         // 5. Patch succeeds with correct hash and unique target
-        let patch_res = patch_file_strict(&proj_path, "src/hello.txt", &new_hash, "Updated", "Patched");
+        let patch_res =
+            patch_file_strict(&proj_path, "src/hello.txt", &new_hash, "Updated", "Patched");
         assert!(patch_res.is_ok());
         let (_old, new_content, _new_hash) = patch_res.unwrap();
         assert_eq!(new_content, "Patched content");
@@ -781,7 +920,13 @@ mod tests {
             "content": "bypassing changeset engine",
             "agent_task_id": "task-hack-123"
         });
-        let res = handle("write_file", &agent_payload, Some(&proj_path), Some("developer")).await;
+        let res = handle(
+            "write_file",
+            &agent_payload,
+            Some(&proj_path),
+            Some("developer"),
+        )
+        .await;
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("ARCHITECTURAL_VIOLATION"));
 
@@ -790,12 +935,16 @@ mod tests {
             "path": "src/user_save.ts",
             "content": "console.log('manual user save');"
         });
-        let user_res = handle("write_file", &user_payload, Some(&proj_path), Some("developer")).await;
+        let user_res = handle(
+            "write_file",
+            &user_payload,
+            Some(&proj_path),
+            Some("developer"),
+        )
+        .await;
         assert!(user_res.is_ok());
         assert!(temp_dir.join("src/user_save.ts").exists());
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
 }
-
-

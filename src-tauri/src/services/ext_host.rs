@@ -1,3 +1,5 @@
+use once_cell::sync::Lazy;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -5,11 +7,10 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use once_cell::sync::Lazy;
-use serde_json::Value;
 use tauri::Emitter;
 
-type PendingRequests = Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<Value, String>>>>>;
+type PendingRequests =
+    Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<Value, String>>>>>;
 
 pub struct ExtensionHostManager {
     child: Option<Child>,
@@ -47,14 +48,21 @@ impl ExtensionHostManager {
         }
     }
 
-    pub fn ensure_started(&mut self, app: &tauri::AppHandle, workspace_root: Option<&str>) -> Result<u16, String> {
+    pub fn ensure_started(
+        &mut self,
+        app: &tauri::AppHandle,
+        workspace_root: Option<&str>,
+    ) -> Result<u16, String> {
         if self.is_running() {
             if let Some(port) = self.server_port {
                 return Ok(port);
             }
         }
 
-        let root = workspace_root.map(|s| s.to_string()).or_else(|| self.workspace_root.clone()).unwrap_or_else(|| ".".to_string());
+        let root = workspace_root
+            .map(|s| s.to_string())
+            .or_else(|| self.workspace_root.clone())
+            .unwrap_or_else(|| ".".to_string());
         self.workspace_root = Some(root.clone());
 
         // Find scripts/extHost.cjs relative to project root or current working dir
@@ -81,10 +89,15 @@ impl ExtensionHostManager {
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW: completely hides cmd/console window popup
         }
 
-        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn Extension Host (Node.js): {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn Extension Host (Node.js): {e}"))?;
 
         let stdin = child.stdin.take().ok_or("Failed to capture child stdin")?;
-        let stdout = child.stdout.take().ok_or("Failed to capture child stdout")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("Failed to capture child stdout")?;
 
         let pending_map = self.pending_requests.clone();
         let app_handle = app.clone();
@@ -107,7 +120,10 @@ impl ExtensionHostManager {
                         };
                         if let Some(sender) = map.remove(&id) {
                             if let Some(err) = json.get("error") {
-                                let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("RPC Error");
+                                let msg = err
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("RPC Error");
                                 let _ = sender.send(Err(msg.to_string()));
                             } else {
                                 let result = json.get("result").cloned().unwrap_or(Value::Null);
@@ -128,10 +144,13 @@ impl ExtensionHostManager {
                                 let _ = app_handle.emit("ext-host:log", &params);
                             }
                             _ => {
-                                let _ = app_handle.emit("ext-host:event", serde_json::json!({
-                                    "method": method,
-                                    "params": params,
-                                }));
+                                let _ = app_handle.emit(
+                                    "ext-host:event",
+                                    serde_json::json!({
+                                        "method": method,
+                                        "params": params,
+                                    }),
+                                );
                             }
                         }
                     }
@@ -151,7 +170,11 @@ impl ExtensionHostManager {
             tokio::runtime::Handle::current().block_on(self.send_request("extHost/init", init_req))
         })?;
 
-        let port = res.get("port").and_then(|v| v.as_u64()).map(|p| p as u16).unwrap_or(0);
+        let port = res
+            .get("port")
+            .and_then(|v| v.as_u64())
+            .map(|p| p as u16)
+            .unwrap_or(0);
         self.server_port = Some(port);
         Ok(port)
     }
@@ -179,8 +202,12 @@ impl ExtensionHostManager {
         let mut line = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
         line.push('\n');
 
-        stdin.write_all(line.as_bytes()).map_err(|e| format!("Failed to write to extHost stdin: {e}"))?;
-        stdin.flush().map_err(|e| format!("Failed to flush extHost stdin: {e}"))?;
+        stdin
+            .write_all(line.as_bytes())
+            .map_err(|e| format!("Failed to write to extHost stdin: {e}"))?;
+        stdin
+            .flush()
+            .map_err(|e| format!("Failed to flush extHost stdin: {e}"))?;
 
         match tokio::time::timeout(Duration::from_secs(15), rx).await {
             Ok(Ok(result)) => result,
@@ -205,9 +232,8 @@ impl ExtensionHostManager {
     }
 }
 
-pub static EXT_HOST: Lazy<tokio::sync::Mutex<ExtensionHostManager>> = Lazy::new(|| {
-    tokio::sync::Mutex::new(ExtensionHostManager::new())
-});
+pub static EXT_HOST: Lazy<tokio::sync::Mutex<ExtensionHostManager>> =
+    Lazy::new(|| tokio::sync::Mutex::new(ExtensionHostManager::new()));
 
 pub async fn handle(
     action: &str,
@@ -227,33 +253,59 @@ pub async fn handle(
             Ok(serde_json::json!({ "success": true, "port": port }))
         }
         "activate_extension" => {
-            let ext_id = payload.get("extension_id").and_then(|v| v.as_str()).ok_or("Missing extension_id")?;
+            let ext_id = payload
+                .get("extension_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing extension_id")?;
             let root = payload.get("workspace_root").and_then(|v| v.as_str());
 
             let mut host = EXT_HOST.lock().await;
             host.ensure_started(app, root)?;
-            let res = host.send_request("extHost/activate", serde_json::json!({ "extensionId": ext_id })).await?;
+            let res = host
+                .send_request(
+                    "extHost/activate",
+                    serde_json::json!({ "extensionId": ext_id }),
+                )
+                .await?;
             Ok(res)
         }
         "resolve_webview" => {
-            let view_id = payload.get("view_id").and_then(|v| v.as_str()).ok_or("Missing view_id")?;
+            let view_id = payload
+                .get("view_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing view_id")?;
             let ext_id = payload.get("extension_id").and_then(|v| v.as_str());
             let root = payload.get("workspace_root").and_then(|v| v.as_str());
 
             let mut host = EXT_HOST.lock().await;
             host.ensure_started(app, root)?;
             if let Some(id) = ext_id {
-                let _ = host.send_request("extHost/activate", serde_json::json!({ "extensionId": id })).await?;
+                let _ = host
+                    .send_request("extHost/activate", serde_json::json!({ "extensionId": id }))
+                    .await?;
             }
-            let res = host.send_request("extHost/resolveWebview", serde_json::json!({ "viewId": view_id })).await?;
+            let res = host
+                .send_request(
+                    "extHost/resolveWebview",
+                    serde_json::json!({ "viewId": view_id }),
+                )
+                .await?;
             Ok(res)
         }
         "post_message" => {
-            let view_id = payload.get("view_id").and_then(|v| v.as_str()).ok_or("Missing view_id")?;
+            let view_id = payload
+                .get("view_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing view_id")?;
             let message = payload.get("message").cloned().unwrap_or(Value::Null);
 
             let mut host = EXT_HOST.lock().await;
-            let res = host.send_request("webview/postMessage", serde_json::json!({ "viewId": view_id, "message": message })).await?;
+            let res = host
+                .send_request(
+                    "webview/postMessage",
+                    serde_json::json!({ "viewId": view_id, "message": message }),
+                )
+                .await?;
             Ok(res)
         }
         "stop" => {

@@ -1,8 +1,8 @@
-use std::time::Instant;
-use tauri::Manager;
-use crate::ipc::types::{ErrorCode, IpcResponse, IpcError};
+use crate::ipc::types::{ErrorCode, IpcError, IpcResponse};
 use crate::services;
 use crate::AppState;
+use std::time::Instant;
+use tauri::Manager;
 
 #[tauri::command]
 pub async fn ipc_request(
@@ -68,13 +68,18 @@ async fn execute_dispatch(
 
             // Keep the runtime scope in sync with restored workspace state,
             // not only folders opened during the current process lifetime.
-            if action == "open_project" || action == "get_state" || action == "clear_active_project" {
-                let project_path = response.get("active_project")
+            if action == "open_project" || action == "get_state" || action == "clear_active_project"
+            {
+                let project_path = response
+                    .get("active_project")
                     .and_then(|project| project.get("path"))
                     .and_then(|path| path.as_str())
                     .map(str::to_owned);
                 let mut app_path = state.active_project_path.lock().map_err(|e| {
-                    (ErrorCode::Internal, format!("Failed to lock active project path: {e}"))
+                    (
+                        ErrorCode::Internal,
+                        format!("Failed to lock active project path: {e}"),
+                    )
                 })?;
                 *app_path = project_path.clone();
                 if let Some(path) = project_path.as_deref() {
@@ -90,22 +95,26 @@ async fn execute_dispatch(
         "filesystem" => {
             let active_path = {
                 let path_lock = state.active_project_path.lock().map_err(|e| {
-                    (ErrorCode::Internal, format!("Failed to lock active project path: {e}"))
+                    (
+                        ErrorCode::Internal,
+                        format!("Failed to lock active project path: {e}"),
+                    )
                 })?;
                 path_lock.clone()
             };
             let permission = payload.get("permission_profile").and_then(|v| v.as_str());
-            let response = services::filesystem::handle(&action, &payload, active_path.as_deref(), permission)
-                .await
-                .map_err(|e| {
-                    if e.contains("Permission") {
-                        (ErrorCode::Permission, e)
-                    } else if e.contains("Validation") {
-                        (ErrorCode::Validation, e)
-                    } else {
-                        (ErrorCode::Filesystem, e)
-                    }
-                })?;
+            let response =
+                services::filesystem::handle(&action, &payload, active_path.as_deref(), permission)
+                    .await
+                    .map_err(|e| {
+                        if e.contains("Permission") {
+                            (ErrorCode::Permission, e)
+                        } else if e.contains("Validation") {
+                            (ErrorCode::Validation, e)
+                        } else {
+                            (ErrorCode::Filesystem, e)
+                        }
+                    })?;
 
             if action == "write_file" {
                 if let (Some(pp), Some(path), Some(content)) = (
@@ -126,95 +135,92 @@ async fn execute_dispatch(
 
             Ok(response)
         }
-        "git" => {
-            services::git::handle(&action, &payload)
-                .map_err(|e| {
-                    if e.contains("Permission") {
-                        (ErrorCode::Permission, e)
-                    } else {
-                        (ErrorCode::Process, e)
-                    }
-                })
-        }
-        "terminal" => {
-            services::terminal::handle(app, &action, &payload, &state.process_handle).await
-                .map_err(|e| {
-                    if e.contains("Permission") {
-                        (ErrorCode::Permission, e)
-                    } else {
-                        (ErrorCode::Process, e)
-                    }
-                })
-        }
-        "models" => {
-            services::models::handle(&action, &payload, app, &state.db).await
-                .map_err(|e| {
-                    if e.contains("unreachable") {
-                        (ErrorCode::Network, e)
-                    } else {
-                        (ErrorCode::Model, e)
-                    }
-                })
-        }
+        "git" => services::git::handle(&action, &payload).map_err(|e| {
+            if e.contains("Permission") {
+                (ErrorCode::Permission, e)
+            } else {
+                (ErrorCode::Process, e)
+            }
+        }),
+        "terminal" => services::terminal::handle(app, &action, &payload, &state.process_handle)
+            .await
+            .map_err(|e| {
+                if e.contains("Permission") {
+                    (ErrorCode::Permission, e)
+                } else {
+                    (ErrorCode::Process, e)
+                }
+            }),
+        "models" => services::models::handle(&action, &payload, app, &state.db)
+            .await
+            .map_err(|e| {
+                if e.contains("unreachable") {
+                    (ErrorCode::Network, e)
+                } else {
+                    (ErrorCode::Model, e)
+                }
+            }),
         "agent" => {
-            services::agent::handle(app, &action, &payload, &state.process_handle, &state.db).await
+            services::agent::handle(app, &action, &payload, &state.process_handle, &state.db)
+                .await
                 .map_err(|e| (ErrorCode::Internal, e))
         }
-        "memory" => {
-            services::memory::handle(&action, &payload, &state.db)
-                .map_err(|e| (ErrorCode::Internal, e))
-        }
-        "indexing" => {
-            services::indexing::handle(&action, &payload, &state.db)
-                .map_err(|e| (ErrorCode::Internal, e))
-        }
-        "plugins" => {
-            services::plugins::handle(&action, &payload).await
-                .map_err(|e| (ErrorCode::Internal, e))
-        }
-        "ext_host" => {
-            services::ext_host::handle(&action, &payload, app).await
-                .map_err(|e| (ErrorCode::Internal, e))
-        }
+        "memory" => services::memory::handle(&action, &payload, &state.db)
+            .map_err(|e| (ErrorCode::Internal, e)),
+        "indexing" => services::indexing::handle(&action, &payload, &state.db)
+            .map_err(|e| (ErrorCode::Internal, e)),
+        "plugins" => services::plugins::handle(&action, &payload)
+            .await
+            .map_err(|e| (ErrorCode::Internal, e)),
+        "ext_host" => services::ext_host::handle(&action, &payload, app)
+            .await
+            .map_err(|e| (ErrorCode::Internal, e)),
         "collaboration" => {
-            services::collaboration::handle(&action, &payload)
-                .map_err(|e| (ErrorCode::Internal, e))
+            services::collaboration::handle(&action, &payload).map_err(|e| (ErrorCode::Internal, e))
         }
         "symbols" => {
-            services::symbols::handle(&action, &payload)
-                .map_err(|e| (ErrorCode::Internal, e))
+            services::symbols::handle(&action, &payload).map_err(|e| (ErrorCode::Internal, e))
         }
-        "system" => {
-            services::system::handle(&action, &payload, app).await
-                .map_err(|e| (ErrorCode::Internal, e))
-        }
-        "brain" => {
-            services::brain::handle(&action, &payload)
-                .map_err(|e| (ErrorCode::Internal, e))
-        }
+        "system" => services::system::handle(&action, &payload, app)
+            .await
+            .map_err(|e| (ErrorCode::Internal, e)),
+        "brain" => services::brain::handle(&action, &payload).map_err(|e| (ErrorCode::Internal, e)),
         "project_state" => {
-            let active_path_opt = state.active_project_path.lock().ok().and_then(|g| g.clone());
-            let project_path = payload.get("project_path").and_then(|v| v.as_str())
+            let active_path_opt = state
+                .active_project_path
+                .lock()
+                .ok()
+                .and_then(|g| g.clone());
+            let project_path = payload
+                .get("project_path")
+                .and_then(|v| v.as_str())
                 .or(active_path_opt.as_deref())
                 .unwrap_or_default();
             let state = services::project_state::ProjectDetector::detect(project_path);
-            serde_json::to_value(state).map_err(|e| (ErrorCode::Internal, format!("Serialization error: {e}")))
+            serde_json::to_value(state)
+                .map_err(|e| (ErrorCode::Internal, format!("Serialization error: {e}")))
         }
 
-        "changeset" => {
-            match action.as_str() {
-                "rollback" => {
-                    let project_path = payload.get("project_path").and_then(|v| v.as_str())
-                        .ok_or((ErrorCode::Validation, "Missing 'project_path'".to_string()))?;
-                    let task_id = payload.get("task_id").and_then(|v| v.as_str())
-                        .ok_or((ErrorCode::Validation, "Missing 'task_id'".to_string()))?;
-                    let reverted = services::changeset::get_rollback_journal().rollback_task(project_path, task_id, Some(&state.db))
-                        .map_err(|e| (ErrorCode::Filesystem, e))?;
-                    Ok(serde_json::json!({ "reverted": reverted }))
-                }
-                _ => Err((ErrorCode::Validation, format!("Unknown changeset action: {action}"))),
+        "changeset" => match action.as_str() {
+            "rollback" => {
+                let project_path = payload
+                    .get("project_path")
+                    .and_then(|v| v.as_str())
+                    .ok_or((ErrorCode::Validation, "Missing 'project_path'".to_string()))?;
+                let task_id = payload
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or((ErrorCode::Validation, "Missing 'task_id'".to_string()))?;
+                let reverted = services::changeset::get_rollback_journal()
+                    .rollback_task(project_path, task_id, Some(&state.db))
+                    .map_err(|e| (ErrorCode::Filesystem, e))?;
+                Ok(serde_json::json!({ "reverted": reverted }))
             }
-        }
+            _ => Err((
+                ErrorCode::Validation,
+                format!("Unknown changeset action: {action}"),
+            )),
+        },
         "window" => {
             if let Some(window) = app.get_webview_window("main") {
                 match action.as_str() {
@@ -247,16 +253,16 @@ async fn execute_dispatch(
                         let _ = window.start_dragging();
                         Ok(serde_json::json!({ "dragging": true }))
                     }
-                    _ => Err((ErrorCode::Validation, format!("Unknown window action: {action}"))),
+                    _ => Err((
+                        ErrorCode::Validation,
+                        format!("Unknown window action: {action}"),
+                    )),
                 }
             } else {
                 Err((ErrorCode::Internal, "Main window not found".to_string()))
             }
         }
-        "auth" => {
-            services::auth::handle_action(&action, &payload).await
-        }
+        "auth" => services::auth::handle_action(&action, &payload).await,
         _ => Err((ErrorCode::Validation, format!("Unknown service: {service}"))),
     }
 }
-

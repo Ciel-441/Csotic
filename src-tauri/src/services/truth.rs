@@ -1,10 +1,10 @@
+use ignore::WalkBuilder;
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
-use rusqlite::Connection;
-use ignore::WalkBuilder;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceTruth {
@@ -62,12 +62,16 @@ impl WorkspaceTruth {
             let path = result.path();
             if path.is_file() {
                 let path_str = path.to_string_lossy();
-                if path_str.contains("node_modules") || path_str.contains(".git") 
-                    || path_str.contains("target") || path_str.contains("dist") {
+                if path_str.contains("node_modules")
+                    || path_str.contains(".git")
+                    || path_str.contains("target")
+                    || path_str.contains("dist")
+                {
                     continue;
                 }
 
-                let rel_path = path.strip_prefix(clean_path)
+                let rel_path = path
+                    .strip_prefix(clean_path)
                     .unwrap_or(path)
                     .to_string_lossy()
                     .replace('\\', "/");
@@ -109,7 +113,15 @@ impl WorkspaceTruth {
                                 "INSERT OR REPLACE INTO symbols (
                                     id, project_id, file_path, name, kind, start_line, end_line
                                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                                rusqlite::params![sym_id, project_id, rel_path, sym.name, sym.kind, sym.start_line as i64, sym.end_line as i64],
+                                rusqlite::params![
+                                    sym_id,
+                                    project_id,
+                                    rel_path,
+                                    sym.name,
+                                    sym.kind,
+                                    sym.start_line as i64,
+                                    sym.end_line as i64
+                                ],
                             );
                         }
                     }
@@ -166,7 +178,10 @@ impl WorkspaceTruth {
         } else {
             project_path
         };
-        let clean_rel = rel_path.replace('\\', "/").trim_start_matches('/').to_string();
+        let clean_rel = rel_path
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
         let full_path = Path::new(clean_path).join(&clean_rel);
 
         if is_create {
@@ -187,7 +202,8 @@ impl WorkspaceTruth {
                 if !exp.is_empty() {
                     match fs::read_to_string(&full_path) {
                         Ok(current_content) => {
-                            let current_hash = crate::services::filesystem::compute_sha256(&current_content);
+                            let current_hash =
+                                crate::services::filesystem::compute_sha256(&current_content);
                             if current_hash != exp {
                                 return Err(format!(
                                     "TRUTH_VIOLATION: Conflict detected on '{}'. Expected hash '{}' but disk currently has '{}'. The file was modified externally.",
@@ -195,7 +211,12 @@ impl WorkspaceTruth {
                                 ));
                             }
                         }
-                        Err(e) => return Err(format!("Failed to read target file '{}' for hash verification: {e}", clean_rel)),
+                        Err(e) => {
+                            return Err(format!(
+                                "Failed to read target file '{}' for hash verification: {e}",
+                                clean_rel
+                            ))
+                        }
                     }
                 }
             }
@@ -221,7 +242,8 @@ mod tests {
 
     #[test]
     fn test_truth_pre_mutation_checks() {
-        let temp_dir = std::env::temp_dir().join(format!("forge_truth_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("forge_truth_test_{}", uuid::Uuid::new_v4()));
         let _ = fs::create_dir_all(&temp_dir);
 
         let test_file = temp_dir.join("existing.txt");
@@ -240,16 +262,24 @@ mod tests {
         };
 
         // Pre-mutation: create_file on existing file should fail
-        assert!(truth.verify_pre_mutation("existing.txt", None, true).is_err());
+        assert!(truth
+            .verify_pre_mutation("existing.txt", None, true)
+            .is_err());
 
         // Pre-mutation: create_file on non-existing file should succeed
-        assert!(truth.verify_pre_mutation("new_file.txt", None, true).is_ok());
+        assert!(truth
+            .verify_pre_mutation("new_file.txt", None, true)
+            .is_ok());
 
         // Pre-mutation: modify_file with matching expected hash should succeed
-        assert!(truth.verify_pre_mutation("existing.txt", Some(&initial_hash), false).is_ok());
+        assert!(truth
+            .verify_pre_mutation("existing.txt", Some(&initial_hash), false)
+            .is_ok());
 
         // Pre-mutation: modify_file with stale hash should fail
-        assert!(truth.verify_pre_mutation("existing.txt", Some("stale_hash_xyz"), false).is_err());
+        assert!(truth
+            .verify_pre_mutation("existing.txt", Some("stale_hash_xyz"), false)
+            .is_err());
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

@@ -1,16 +1,28 @@
-use std::sync::RwLock;
 use once_cell::sync::Lazy;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::RwLock;
 
 pub trait ForgePlugin: Send + Sync {
     fn name(&self) -> String;
     fn description(&self) -> String;
-    fn project_path(&self) -> Option<String> { None }
-    fn analyze(&self, _project_path: &str) -> Vec<String> { Vec::new() }
-    fn get_tools(&self) -> Vec<serde_json::Value> { Vec::new() }
-    fn execute_tool(&self, _name: &str, _args: &serde_json::Value) -> Option<Result<String, String>> { None }
+    fn project_path(&self) -> Option<String> {
+        None
+    }
+    fn analyze(&self, _project_path: &str) -> Vec<String> {
+        Vec::new()
+    }
+    fn get_tools(&self) -> Vec<serde_json::Value> {
+        Vec::new()
+    }
+    fn execute_tool(
+        &self,
+        _name: &str,
+        _args: &serde_json::Value,
+    ) -> Option<Result<String, String>> {
+        None
+    }
 }
 
 pub struct PluginRegistry {
@@ -21,18 +33,18 @@ pub struct PluginRegistry {
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        Self { 
+        Self {
             plugins: Vec::new(),
             loaded_workspaces: std::collections::HashSet::new(),
             trusted_workspaces: std::collections::HashSet::new(),
         }
     }
-    
+
     #[allow(dead_code)]
     pub fn register(&mut self, plugin: Box<dyn ForgePlugin>) {
         self.plugins.push(plugin);
     }
-    
+
     pub fn run_analyzers(&self, project_path: &str) -> Vec<String> {
         let mut warnings = Vec::new();
         for p in &self.plugins {
@@ -40,7 +52,7 @@ impl PluginRegistry {
         }
         warnings
     }
-    
+
     pub fn get_all_tools(&self) -> Vec<serde_json::Value> {
         let mut tools = Vec::new();
         for p in &self.plugins {
@@ -48,8 +60,12 @@ impl PluginRegistry {
         }
         tools
     }
-    
-    pub fn execute_tool(&self, name: &str, args: &serde_json::Value) -> Option<Result<String, String>> {
+
+    pub fn execute_tool(
+        &self,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> Option<Result<String, String>> {
         for p in &self.plugins {
             if let Some(res) = p.execute_tool(name, args) {
                 return Some(res);
@@ -71,7 +87,10 @@ pub fn register_plugin(plugin: Box<dyn ForgePlugin>) {
     }
 }
 
-pub async fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::Value, String> {
+pub async fn handle(
+    action: &str,
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
     match action {
         "get_plugins" => {
             let mut p_info = Vec::new();
@@ -86,17 +105,24 @@ pub async fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_j
             Ok(serde_json::json!({ "plugins": p_info }))
         }
         "install_extension" => {
-            let id = payload.get("id").and_then(|v| v.as_str()).ok_or("Missing extension 'id'")?;
-            let download_url = payload.get("download_url").and_then(|v| v.as_str()).unwrap_or("");
+            let id = payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing extension 'id'")?;
+            let download_url = payload
+                .get("download_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             install_extension(id, download_url, payload.clone()).await
         }
         "uninstall_extension" => {
-            let id = payload.get("id").and_then(|v| v.as_str()).ok_or("Missing extension 'id'")?;
+            let id = payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing extension 'id'")?;
             uninstall_extension(id)
         }
-        "get_installed_extensions" => {
-            get_installed_extensions()
-        }
+        "get_installed_extensions" => get_installed_extensions(),
         "trust_workspace" => {
             if let Some(project_path) = payload.get("project_path").and_then(|v| v.as_str()) {
                 if let Ok(mut reg) = REGISTRY.write() {
@@ -109,7 +135,10 @@ pub async fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_j
             }
         }
         "is_workspace_trusted" => {
-            let project_path = payload.get("project_path").and_then(|v| v.as_str()).unwrap_or("");
+            let project_path = payload
+                .get("project_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let trusted = if let Ok(reg) = REGISTRY.read() {
                 reg.trusted_workspaces.contains(project_path)
             } else {
@@ -121,7 +150,8 @@ pub async fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_j
             if let Some(project_path) = payload.get("project_path").and_then(|v| v.as_str()) {
                 if let Ok(mut reg) = REGISTRY.write() {
                     reg.trusted_workspaces.remove(project_path);
-                    reg.plugins.retain(|p| p.project_path().as_deref() != Some(project_path));
+                    reg.plugins
+                        .retain(|p| p.project_path().as_deref() != Some(project_path));
                     reg.loaded_workspaces.remove(project_path);
                 }
                 Ok(serde_json::json!({ "trusted": false }))
@@ -159,8 +189,10 @@ pub async fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_j
                 }
                 // Reload workspace plugins so the newly created plugin is immediately registered
                 reload_workspace_plugins(project_path);
-                
-                Ok(serde_json::json!({ "success": true, "path": file_path.to_string_lossy().to_string() }))
+
+                Ok(
+                    serde_json::json!({ "success": true, "path": file_path.to_string_lossy().to_string() }),
+                )
             } else {
                 Err("Missing project_path".to_string())
             }
@@ -225,11 +257,14 @@ pub async fn install_extension(
     let existing_dir = if target_dir.join("package.json").exists() {
         Some(target_dir.clone())
     } else if let Ok(entries) = fs::read_dir(&ext_dir) {
-        entries.flatten().find(|e| {
-            e.path().is_dir() 
-                && e.file_name().to_string_lossy().to_lowercase() == id.to_lowercase() 
-                && e.path().join("package.json").exists()
-        }).map(|e| e.path())
+        entries
+            .flatten()
+            .find(|e| {
+                e.path().is_dir()
+                    && e.file_name().to_string_lossy().to_lowercase() == id.to_lowercase()
+                    && e.path().join("package.json").exists()
+            })
+            .map(|e| e.path())
     } else {
         None
     };
@@ -237,7 +272,12 @@ pub async fn install_extension(
     if let Some(found_path) = existing_dir {
         let index_file = ext_dir.join("extensions.json");
         let mut current_list = read_extensions_index(&index_file);
-        current_list.retain(|item| item.get("id").and_then(|v| v.as_str()).map(|s| s.to_lowercase()) != Some(id.to_lowercase()));
+        current_list.retain(|item| {
+            item.get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_lowercase())
+                != Some(id.to_lowercase())
+        });
         let mut meta_obj = meta;
         if let Some(obj) = meta_obj.as_object_mut() {
             obj.insert("installed".to_string(), serde_json::Value::Bool(true));
@@ -268,7 +308,11 @@ pub async fn install_extension(
         let id_lower = id.to_lowercase();
         if let Ok(entries) = fs::read_dir(&vscode_ext_dir) {
             for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string().to_lowercase();
+                let name = entry
+                    .file_name()
+                    .to_string_lossy()
+                    .to_string()
+                    .to_lowercase();
                 if name.starts_with(&id_lower) || id_lower.starts_with(&name) {
                     let pkg_p = entry.path().join("package.json");
                     if pkg_p.exists() {
@@ -276,7 +320,12 @@ pub async fn install_extension(
                         if target_dir.join("package.json").exists() {
                             let index_file = ext_dir.join("extensions.json");
                             let mut current_list = read_extensions_index(&index_file);
-                            current_list.retain(|item| item.get("id").and_then(|v| v.as_str()).map(|s| s.to_lowercase()) != Some(id.to_lowercase()));
+                            current_list.retain(|item| {
+                                item.get("id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_lowercase())
+                                    != Some(id.to_lowercase())
+                            });
                             let mut meta_obj = meta;
                             if let Some(obj) = meta_obj.as_object_mut() {
                                 obj.insert("installed".to_string(), serde_json::Value::Bool(true));
@@ -331,7 +380,9 @@ pub async fn install_extension(
     };
 
     if url_to_use.is_empty() {
-        return Err(format!("Could not resolve download URL for extension: {id}"));
+        return Err(format!(
+            "Could not resolve download URL for extension: {id}"
+        ));
     }
 
     let client = reqwest::Client::builder()
@@ -347,7 +398,10 @@ pub async fn install_extension(
         .map_err(|e| format!("Download error: {e}"))?;
 
     if !response.status().is_success() {
-        return Err(format!("Download failed with status: {}", response.status()));
+        return Err(format!(
+            "Download failed with status: {}",
+            response.status()
+        ));
     }
 
     let bytes = response
@@ -359,13 +413,14 @@ pub async fn install_extension(
     let target_dir_clone = target_dir.clone();
     tokio::task::spawn_blocking(move || {
         let reader = std::io::Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(reader)
-            .map_err(|e| format!("Invalid VSIX/ZIP archive: {e}"))?;
+        let mut archive =
+            zip::ZipArchive::new(reader).map_err(|e| format!("Invalid VSIX/ZIP archive: {e}"))?;
 
         for i in 0..archive.len() {
-            let mut file = archive.by_index(i)
+            let mut file = archive
+                .by_index(i)
                 .map_err(|e| format!("Error reading archive index {i}: {e}"))?;
-            
+
             let raw_path = match file.enclosed_name() {
                 Some(path) => path.to_owned(),
                 None => continue,
@@ -402,7 +457,12 @@ pub async fn install_extension(
     // Update extensions.json index
     let index_file = ext_dir.join("extensions.json");
     let mut current_list = read_extensions_index(&index_file);
-    current_list.retain(|item| item.get("id").and_then(|v| v.as_str()).map(|s| s.to_lowercase()) != Some(id.to_lowercase()));
+    current_list.retain(|item| {
+        item.get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_lowercase())
+            != Some(id.to_lowercase())
+    });
     let mut meta_obj = meta;
     if let Some(obj) = meta_obj.as_object_mut() {
         obj.insert("installed".to_string(), serde_json::Value::Bool(true));
@@ -437,7 +497,12 @@ pub fn uninstall_extension(id: &str) -> Result<serde_json::Value, String> {
 
     let index_file = ext_dir.join("extensions.json");
     let mut current_list = read_extensions_index(&index_file);
-    current_list.retain(|item| item.get("id").and_then(|v| v.as_str()).map(|s| s.to_lowercase()) != Some(id.to_lowercase()));
+    current_list.retain(|item| {
+        item.get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_lowercase())
+            != Some(id.to_lowercase())
+    });
     if let Ok(json_str) = serde_json::to_string_pretty(&current_list) {
         let _ = fs::write(&index_file, json_str);
     }
@@ -455,7 +520,12 @@ pub fn get_installed_extensions() -> Result<serde_json::Value, String> {
         for entry in entries.flatten() {
             if entry.path().is_dir() {
                 let id = entry.file_name().to_string_lossy().to_string();
-                if !list.iter().any(|item| item.get("id").and_then(|v| v.as_str()).map(|s| s.to_lowercase()) == Some(id.to_lowercase())) {
+                if !list.iter().any(|item| {
+                    item.get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_lowercase())
+                        == Some(id.to_lowercase())
+                }) {
                     let pkg_file = entry.path().join("package.json");
                     if pkg_file.exists() {
                         if let Ok(content) = fs::read_to_string(&pkg_file) {
@@ -463,11 +533,19 @@ pub fn get_installed_extensions() -> Result<serde_json::Value, String> {
                                 let parts: Vec<&str> = id.split('.').collect();
                                 let namespace = parts.first().copied().unwrap_or("");
                                 let name = parts.get(1).copied().unwrap_or(&id);
-                                let display_name = pkg.get("displayName").and_then(|v| v.as_str())
+                                let display_name = pkg
+                                    .get("displayName")
+                                    .and_then(|v| v.as_str())
                                     .or_else(|| pkg.get("name").and_then(|v| v.as_str()))
                                     .unwrap_or(&id);
-                                let desc = pkg.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                                let version = pkg.get("version").and_then(|v| v.as_str()).unwrap_or("1.0.0");
+                                let desc = pkg
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let version = pkg
+                                    .get("version")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("1.0.0");
 
                                 list.push(serde_json::json!({
                                     "id": id,
@@ -523,18 +601,26 @@ pub struct DynamicWorkspacePlugin {
 }
 
 impl ForgePlugin for DynamicWorkspacePlugin {
-    fn name(&self) -> String { self.name.clone() }
-    fn description(&self) -> String { self.description.clone() }
-    fn project_path(&self) -> Option<String> { Some(self.project_path.clone()) }
-    
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+    fn project_path(&self) -> Option<String> {
+        Some(self.project_path.clone())
+    }
+
     fn get_tools(&self) -> Vec<serde_json::Value> {
         let mut llm_tools = Vec::new();
         for t in &self.tools {
-            let params = t.parameters.clone().unwrap_or_else(|| serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }));
-            
+            let params = t.parameters.clone().unwrap_or_else(|| {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                })
+            });
+
             llm_tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
@@ -546,13 +632,15 @@ impl ForgePlugin for DynamicWorkspacePlugin {
         }
         llm_tools
     }
-    
+
     fn execute_tool(&self, name: &str, args: &serde_json::Value) -> Option<Result<String, String>> {
         if let Some(tool_def) = self.tools.iter().find(|t| t.name == name) {
             // Check workspace trust
             if let Ok(reg) = REGISTRY.read() {
                 if !reg.trusted_workspaces.contains(&self.project_path) {
-                    return Some(Err("Workspace is not trusted to execute dynamic plugin commands.".to_string()));
+                    return Some(Err(
+                        "Workspace is not trusted to execute dynamic plugin commands.".to_string(),
+                    ));
                 }
             }
 
@@ -560,17 +648,26 @@ impl ForgePlugin for DynamicWorkspacePlugin {
             let mut cmd_str = tool_def.command.clone();
             if let Some(obj) = args.as_object() {
                 for (k, v) in obj {
-                    let val_str = v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string());
+                    let val_str = v
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| v.to_string());
                     cmd_str = cmd_str.replace(&format!("{{{}}}", k), &val_str);
                 }
             }
 
             // Dangerous system destructive patterns check
             let lower_cmd = cmd_str.to_lowercase();
-            if lower_cmd.contains("rm -rf /") || lower_cmd.contains("mkfs") || lower_cmd.contains("format c:") || lower_cmd.contains("del /s /q c:\\") {
-                return Some(Err("Command contains potentially destructive system instructions.".to_string()));
+            if lower_cmd.contains("rm -rf /")
+                || lower_cmd.contains("mkfs")
+                || lower_cmd.contains("format c:")
+                || lower_cmd.contains("del /s /q c:\\")
+            {
+                return Some(Err(
+                    "Command contains potentially destructive system instructions.".to_string(),
+                ));
             }
-            
+
             // Execute in project directory
             #[cfg(target_os = "windows")]
             let output = {
@@ -586,14 +683,14 @@ impl ForgePlugin for DynamicWorkspacePlugin {
                     .creation_flags(0x08000000);
                 pcmd.output()
             };
-                
+
             #[cfg(not(target_os = "windows"))]
             let output = Command::new("sh")
                 .arg("-c")
                 .arg(&cmd_str)
                 .current_dir(&self.project_path)
                 .output();
-                
+
             match output {
                 Ok(out) => {
                     let mut res = String::from_utf8_lossy(&out.stdout).to_string();
@@ -603,7 +700,7 @@ impl ForgePlugin for DynamicWorkspacePlugin {
                     }
                     Some(Ok(res))
                 }
-                Err(e) => Some(Err(format!("Failed to execute tool command: {}", e)))
+                Err(e) => Some(Err(format!("Failed to execute tool command: {}", e))),
             }
         } else {
             None
@@ -621,7 +718,7 @@ pub fn load_workspace_plugins(project_path: &str) {
         if !reg.trusted_workspaces.contains(project_path) {
             return;
         }
-        
+
         let plugins_dir = Path::new(project_path).join(".forge").join("plugins");
         if let Ok(entries) = fs::read_dir(&plugins_dir) {
             for entry in entries.filter_map(|e| e.ok()) {
@@ -646,7 +743,8 @@ pub fn load_workspace_plugins(project_path: &str) {
 
 pub fn reload_workspace_plugins(project_path: &str) {
     if let Ok(mut reg) = REGISTRY.write() {
-        reg.plugins.retain(|p| p.project_path().as_deref() != Some(project_path));
+        reg.plugins
+            .retain(|p| p.project_path().as_deref() != Some(project_path));
         reg.loaded_workspaces.remove(project_path);
     }
     load_workspace_plugins(project_path);
@@ -661,23 +759,48 @@ mod tests {
         let fake_path = "C:/fake/workspace/test_path";
 
         // Initial state: not trusted
-        let check_res = handle("is_workspace_trusted", &serde_json::json!({ "project_path": fake_path })).await.unwrap();
+        let check_res = handle(
+            "is_workspace_trusted",
+            &serde_json::json!({ "project_path": fake_path }),
+        )
+        .await
+        .unwrap();
         assert_eq!(check_res["trusted"], false);
 
         // Trust workspace
-        let trust_res = handle("trust_workspace", &serde_json::json!({ "project_path": fake_path })).await.unwrap();
+        let trust_res = handle(
+            "trust_workspace",
+            &serde_json::json!({ "project_path": fake_path }),
+        )
+        .await
+        .unwrap();
         assert_eq!(trust_res["trusted"], true);
 
         // Verify trusted
-        let check_res2 = handle("is_workspace_trusted", &serde_json::json!({ "project_path": fake_path })).await.unwrap();
+        let check_res2 = handle(
+            "is_workspace_trusted",
+            &serde_json::json!({ "project_path": fake_path }),
+        )
+        .await
+        .unwrap();
         assert_eq!(check_res2["trusted"], true);
 
         // Untrust workspace
-        let untrust_res = handle("untrust_workspace", &serde_json::json!({ "project_path": fake_path })).await.unwrap();
+        let untrust_res = handle(
+            "untrust_workspace",
+            &serde_json::json!({ "project_path": fake_path }),
+        )
+        .await
+        .unwrap();
         assert_eq!(untrust_res["trusted"], false);
 
         // Verify untrusted
-        let check_res3 = handle("is_workspace_trusted", &serde_json::json!({ "project_path": fake_path })).await.unwrap();
+        let check_res3 = handle(
+            "is_workspace_trusted",
+            &serde_json::json!({ "project_path": fake_path }),
+        )
+        .await
+        .unwrap();
         assert_eq!(check_res3["trusted"], false);
     }
 
@@ -705,7 +828,9 @@ mod tests {
         });
         let res = install_extension(sample_id, "", meta).await.unwrap();
         assert_eq!(res.get("success").and_then(|v| v.as_bool()), Some(true));
-        assert!(res.get("already_installed").is_some() || res.get("imported_from_vscode").is_some());
+        assert!(
+            res.get("already_installed").is_some() || res.get("imported_from_vscode").is_some()
+        );
 
         let _ = std::fs::remove_dir_all(&target);
     }

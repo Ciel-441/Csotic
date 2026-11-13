@@ -1,5 +1,5 @@
-use std::sync::RwLock;
 use once_cell::sync::Lazy;
+use std::sync::RwLock;
 
 // In-memory cache of recent runtime exceptions mapped to file paths
 pub static ACTIVE_EXCEPTIONS: Lazy<RwLock<Vec<String>>> = Lazy::new(|| RwLock::new(Vec::new()));
@@ -16,7 +16,10 @@ pub fn ingest_log(log_line: &str) {
                     Ok(guard) => guard,
                     Err(poisoned) => poisoned.into_inner(),
                 };
-                let warning = format!("RUNTIME EXCEPTION: Found error in log traced to `{}` - Context: {}", token, log_line);
+                let warning = format!(
+                    "RUNTIME EXCEPTION: Found error in log traced to `{}` - Context: {}",
+                    token, log_line
+                );
                 if !exceptions.contains(&warning) {
                     exceptions.push(warning);
                 }

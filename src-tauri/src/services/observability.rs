@@ -1,5 +1,5 @@
+use rusqlite::{params, Connection};
 use std::sync::Mutex;
-use rusqlite::{Connection, params};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn redact_secrets(input: &str) -> String {
@@ -21,37 +21,43 @@ pub fn redact_secrets(input: &str) -> String {
     }
 
     // 2. Redact Authorization headers, Bearer tokens, and key-value secret assignments
-    let lines: Vec<String> = redacted.lines().map(|line| {
-        let trimmed = line.trim();
-        let lower = trimmed.to_lowercase();
-        if lower.contains("[redacted_") {
-            line.to_string()
-        } else if lower.starts_with("authorization:") || lower.starts_with("bearer ") || lower.starts_with("basic ") {
-            "[REDACTED_AUTH_HEADER]".to_string()
-        } else if lower.contains("password")
-            || lower.contains("secret")
-            || lower.contains("api_key")
-            || lower.contains("apikey")
-            || lower.contains("private_key")
-            || lower.contains("auth_key")
-            || lower.contains("access_token")
-            || lower.contains("jwt")
-            || lower.contains("token=")
-            || lower.contains("token:")
-            || lower.contains("token\":")
-        {
-            // If it looks like a key-value assignment (e.g. MY_INTERNAL_TOKEN=..., "apiKey": "...")
-            if let Some(idx) = line.find('=') {
-                format!("{}=[REDACTED_SECRET]", &line[..idx])
-            } else if let Some(idx) = line.find(':') {
-                format!("{}: \"[REDACTED_SECRET]\"", &line[..idx])
+    let lines: Vec<String> = redacted
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            let lower = trimmed.to_lowercase();
+            if lower.contains("[redacted_") {
+                line.to_string()
+            } else if lower.starts_with("authorization:")
+                || lower.starts_with("bearer ")
+                || lower.starts_with("basic ")
+            {
+                "[REDACTED_AUTH_HEADER]".to_string()
+            } else if lower.contains("password")
+                || lower.contains("secret")
+                || lower.contains("api_key")
+                || lower.contains("apikey")
+                || lower.contains("private_key")
+                || lower.contains("auth_key")
+                || lower.contains("access_token")
+                || lower.contains("jwt")
+                || lower.contains("token=")
+                || lower.contains("token:")
+                || lower.contains("token\":")
+            {
+                // If it looks like a key-value assignment (e.g. MY_INTERNAL_TOKEN=..., "apiKey": "...")
+                if let Some(idx) = line.find('=') {
+                    format!("{}=[REDACTED_SECRET]", &line[..idx])
+                } else if let Some(idx) = line.find(':') {
+                    format!("{}: \"[REDACTED_SECRET]\"", &line[..idx])
+                } else {
+                    "[REDACTED_SECRET_LINE]".to_string()
+                }
             } else {
-                "[REDACTED_SECRET_LINE]".to_string()
+                line.to_string()
             }
-        } else {
-            line.to_string()
-        }
-    }).collect();
+        })
+        .collect();
 
     lines.join("\n")
 }
@@ -76,7 +82,16 @@ fn regex_lite_or_replace(text: &mut String, prefix_type: &str) -> Result<(), ()>
     };
 
     while let Some(start) = text.find(prefix) {
-        let end = text[start..].find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',' || c == '\\' || c == '}' || c == '&')
+        let end = text[start..]
+            .find(|c: char| {
+                c.is_whitespace()
+                    || c == '"'
+                    || c == '\''
+                    || c == ','
+                    || c == '\\'
+                    || c == '}'
+                    || c == '&'
+            })
             .map(|len| start + len)
             .unwrap_or(text.len());
         text.replace_range(start..end, label);
@@ -93,7 +108,7 @@ pub fn log_action(db: &Mutex<Connection>, session_id: &str, action_type: &str, p
         .to_string();
 
     let safe_payload = redact_secrets(payload);
-    
+
     let _ = conn.execute(
         "INSERT INTO action_logs (session_id, action_type, payload, created_at) VALUES (?1, ?2, ?3, ?4)",
         params![session_id, action_type, safe_payload, now],
@@ -147,4 +162,3 @@ mod tests {
         assert!(!redacted.contains("secret_value_xyz123"));
     }
 }
-

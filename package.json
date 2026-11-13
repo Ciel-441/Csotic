@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "tsc": "tsc",
     "check:ipc": "node scripts/check-ipc-contract.mjs",
     "test:auth": "node scripts/test-auth-security.mjs",
     "preview": "vite preview",

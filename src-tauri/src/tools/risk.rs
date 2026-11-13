@@ -5,17 +5,25 @@ pub fn classify_risk(command: &str) -> RiskLevel {
     let c = command.to_lowercase();
 
     // Critical — destructive, irreversible, or dangerous
-    if c.contains("rm -rf") || c.contains("del /s") || c.contains("format ")
-        || c.contains("git push --force") || c.contains("git reset --hard")
-        || c.contains("git branch -d") || c.contains("git branch -D")
-        || c.contains("drop table") || c.contains("drop database")
-        || c.contains("> /dev/") || c.contains(":(){ :|:&};:")
+    if c.contains("rm -rf")
+        || c.contains("del /s")
+        || c.contains("format ")
+        || c.contains("git push --force")
+        || c.contains("git reset --hard")
+        || c.contains("git branch -d")
+        || c.contains("git branch -D")
+        || c.contains("drop table")
+        || c.contains("drop database")
+        || c.contains("> /dev/")
+        || c.contains(":(){ :|:&};:")
     {
         return RiskLevel::Critical;
     }
 
     // High — potentially destructive
-    if c.starts_with("rm ") || c.contains("git checkout") || c.contains("git pull")
+    if c.starts_with("rm ")
+        || c.contains("git checkout")
+        || c.contains("git pull")
         || c.contains("npm publish")
         || (c.contains("pip install") && c.contains("--upgrade"))
         || c.contains("sudo")
@@ -24,8 +32,10 @@ pub fn classify_risk(command: &str) -> RiskLevel {
     }
 
     // Medium — modifying but generally safe
-    if c.contains("npm install") || c.contains("pip install")
-        || c.contains("git add") || c.contains("git commit")
+    if c.contains("npm install")
+        || c.contains("pip install")
+        || c.contains("git add")
+        || c.contains("git commit")
     {
         return RiskLevel::Medium;
     }

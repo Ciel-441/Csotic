@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -40,11 +40,11 @@ impl ContextEngine {
         project_path: &str,
         objective: &str,
         active_files: &[String],
-        db: &Mutex<Connection>
+        db: &Mutex<Connection>,
     ) -> ContextSynthesis {
         let project_id = crate::services::filesystem::compute_project_id(project_path);
         let ranked = Self::rank_context(project_path, objective, active_files, db, &project_id);
-        
+
         let mut git_cmd = std::process::Command::new("git");
         git_cmd.args(["diff", "--stat"]).current_dir(project_path);
 
@@ -66,11 +66,14 @@ impl ContextEngine {
             })
             .unwrap_or_default();
 
-        let memory_summary = crate::services::memory::get_all_memories_summary(db, Some(&project_id), objective);
+        let memory_summary =
+            crate::services::memory::get_all_memories_summary(db, Some(&project_id), objective);
 
         // Load project Obsidian brain vault notes (.forge/brain/*.md) - ranked by semantic relevance + source linkage
         let mut brain_context = String::new();
-        let brain_dir = std::path::Path::new(project_path).join(".forge").join("brain");
+        let brain_dir = std::path::Path::new(project_path)
+            .join(".forge")
+            .join("brain");
         if brain_dir.is_dir() {
             if let Ok(entries) = std::fs::read_dir(brain_dir) {
                 let mut note_scores: Vec<(usize, String, String)> = Vec::new();
@@ -80,35 +83,65 @@ impl ContextEngine {
                     let path = entry.path();
                     if path.extension().and_then(|e| e.to_str()) == Some("md") {
                         if let Ok(content) = std::fs::read_to_string(&path) {
-                            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            let file_name = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
                             let combined = format!("{} {}", file_name, content).to_lowercase();
-                            let mut score = semantic_terms.iter().filter(|k| combined.contains(*k)).count() * 10;
+                            let mut score = semantic_terms
+                                .iter()
+                                .filter(|k| combined.contains(*k))
+                                .count()
+                                * 10;
 
                             // Durable Source Linkage: Verify referenced source files exist in active workspace
                             let mut source_status = Vec::new();
                             let mut has_stale = false;
-                            
+
                             // Check words that look like file paths (e.g. src/..., AuthProvider.tsx, etc.)
                             for token in content.split_whitespace() {
-                                let clean_token = token.trim_matches(|c| c == '`' || c == '(' || c == ')' || c == '[' || c == ']' || c == '\'' || c == '"');
-                                if (clean_token.starts_with("src/") || clean_token.contains('.')) 
-                                    && (clean_token.ends_with(".ts") || clean_token.ends_with(".tsx") || clean_token.ends_with(".rs") || clean_token.ends_with(".js") || clean_token.ends_with(".jsx") || clean_token.ends_with(".py")) {
-                                    let candidate_file = std::path::Path::new(project_path).join(clean_token);
+                                let clean_token = token.trim_matches(|c| {
+                                    c == '`'
+                                        || c == '('
+                                        || c == ')'
+                                        || c == '['
+                                        || c == ']'
+                                        || c == '\''
+                                        || c == '"'
+                                });
+                                if (clean_token.starts_with("src/") || clean_token.contains('.'))
+                                    && (clean_token.ends_with(".ts")
+                                        || clean_token.ends_with(".tsx")
+                                        || clean_token.ends_with(".rs")
+                                        || clean_token.ends_with(".js")
+                                        || clean_token.ends_with(".jsx")
+                                        || clean_token.ends_with(".py"))
+                                {
+                                    let candidate_file =
+                                        std::path::Path::new(project_path).join(clean_token);
                                     if candidate_file.is_file() {
                                         source_status.push(format!("Linked: {}", clean_token));
                                     } else {
                                         has_stale = true;
-                                        source_status.push(format!("STALE/MISSING: {}", clean_token));
+                                        source_status
+                                            .push(format!("STALE/MISSING: {}", clean_token));
                                     }
                                 }
                             }
 
                             let linkage_tag = if has_stale {
                                 score = score.saturating_sub(15);
-                                format!("[⚠️ NOTE CONTAINS STALE SOURCE REFERENCES: {}]\n", source_status.join(", "))
+                                format!(
+                                    "[⚠️ NOTE CONTAINS STALE SOURCE REFERENCES: {}]\n",
+                                    source_status.join(", ")
+                                )
                             } else if !source_status.is_empty() {
                                 score += 20;
-                                format!("[✅ VERIFIED LIVE SOURCE REFERENCES: {}]\n", source_status.join(", "))
+                                format!(
+                                    "[✅ VERIFIED LIVE SOURCE REFERENCES: {}]\n",
+                                    source_status.join(", ")
+                                )
                             } else {
                                 String::new()
                             };
@@ -132,24 +165,36 @@ impl ContextEngine {
 
         let mut graph_info = String::new();
         for file in active_files {
-            if let Ok(deps) = crate::services::graph::query_dependencies(db, file, Some(&project_id)) {
+            if let Ok(deps) =
+                crate::services::graph::query_dependencies(db, file, Some(&project_id))
+            {
                 if !deps.is_empty() {
                     graph_info.push_str(&format!("\nDependencies for {}:\n", file));
                     for dep in deps {
-                        graph_info.push_str(&format!("  - {} -> {}\n", dep.relationship, dep.target));
+                        graph_info
+                            .push_str(&format!("  - {} -> {}\n", dep.relationship, dep.target));
                     }
                 }
             }
         }
         if graph_info.len() > 3000 {
-            graph_info = format!("{}...\n[Graph dependencies truncated to fit token budget]", &graph_info[..3000]);
+            graph_info = format!(
+                "{}...\n[Graph dependencies truncated to fit token budget]",
+                &graph_info[..3000]
+            );
         }
 
-        let predictive_warnings = crate::services::predictive::analyze_codebase(db, active_files, project_path);
-        let security_warnings = crate::services::security::scan_codebase(active_files, project_path);
+        let predictive_warnings =
+            crate::services::predictive::analyze_codebase(db, active_files, project_path);
+        let security_warnings =
+            crate::services::security::scan_codebase(active_files, project_path);
         let runtime_warnings = crate::services::runtime::get_runtime_warnings().join("\n- ");
-        let performance_warnings = crate::services::performance::analyze_performance(active_files, project_path).join("\n- ");
-        let refactoring_warnings = crate::services::refactoring::analyze_refactoring(active_files, project_path).join("\n- ");
+        let performance_warnings =
+            crate::services::performance::analyze_performance(active_files, project_path)
+                .join("\n- ");
+        let refactoring_warnings =
+            crate::services::refactoring::analyze_refactoring(active_files, project_path)
+                .join("\n- ");
 
         // Phase 15: Run Plugin SDK Analyzers
         let plugin_warnings = if let Ok(reg) = crate::services::plugins::REGISTRY.read() {
@@ -189,76 +234,236 @@ impl ContextEngine {
             // Auth, Session, Identity & Persistence
             (
                 &[
-                    "auth", "authentication", "login", "signin", "signup", "register", "session",
-                    "user", "jwt", "oauth", "credential", "security", "permission", "role",
-                    "identity", "persistent", "persistence", "cookie", "localstorage", "rememberme", "token", "passkey"
+                    "auth",
+                    "authentication",
+                    "login",
+                    "signin",
+                    "signup",
+                    "register",
+                    "session",
+                    "user",
+                    "jwt",
+                    "oauth",
+                    "credential",
+                    "security",
+                    "permission",
+                    "role",
+                    "identity",
+                    "persistent",
+                    "persistence",
+                    "cookie",
+                    "localstorage",
+                    "rememberme",
+                    "token",
+                    "passkey",
                 ],
                 &[
-                    "auth", "authentication", "login", "session", "user", "jwt", "token",
-                    "credential", "guard", "security", "context", "provider", "middleware",
-                    "identity", "store", "persist", "persistence", "storage", "cookie",
-                    "localstorage", "authstore", "sessionprovider", "identityservice", "refreshtoken"
-                ]
+                    "auth",
+                    "authentication",
+                    "login",
+                    "session",
+                    "user",
+                    "jwt",
+                    "token",
+                    "credential",
+                    "guard",
+                    "security",
+                    "context",
+                    "provider",
+                    "middleware",
+                    "identity",
+                    "store",
+                    "persist",
+                    "persistence",
+                    "storage",
+                    "cookie",
+                    "localstorage",
+                    "authstore",
+                    "sessionprovider",
+                    "identityservice",
+                    "refreshtoken",
+                ],
             ),
-            
             // State Management & Data Flow
             (
                 &[
-                    "state", "store", "management", "redux", "zustand", "context", "flux",
-                    "atom", "reducer", "signals", "observable", "cache", "persistence", "hydration"
+                    "state",
+                    "store",
+                    "management",
+                    "redux",
+                    "zustand",
+                    "context",
+                    "flux",
+                    "atom",
+                    "reducer",
+                    "signals",
+                    "observable",
+                    "cache",
+                    "persistence",
+                    "hydration",
                 ],
                 &[
-                    "state", "store", "context", "reducer", "action", "hook", "use",
-                    "atom", "dispatch", "provider", "viewmodel", "cache", "persist", "hydration"
-                ]
+                    "state",
+                    "store",
+                    "context",
+                    "reducer",
+                    "action",
+                    "hook",
+                    "use",
+                    "atom",
+                    "dispatch",
+                    "provider",
+                    "viewmodel",
+                    "cache",
+                    "persist",
+                    "hydration",
+                ],
             ),
-            
             // Database, Models & Storage
             (
                 &[
-                    "db", "database", "sql", "sqlite", "postgres", "mysql", "model", "schema",
-                    "table", "entity", "orm", "migration", "storage", "cache", "redis", "persist", "repository", "dao"
+                    "db",
+                    "database",
+                    "sql",
+                    "sqlite",
+                    "postgres",
+                    "mysql",
+                    "model",
+                    "schema",
+                    "table",
+                    "entity",
+                    "orm",
+                    "migration",
+                    "storage",
+                    "cache",
+                    "redis",
+                    "persist",
+                    "repository",
+                    "dao",
                 ],
                 &[
-                    "db", "database", "sql", "sqlite", "query", "schema", "table", "migration",
-                    "model", "repository", "dao", "entity", "store", "storage", "persist"
-                ]
+                    "db",
+                    "database",
+                    "sql",
+                    "sqlite",
+                    "query",
+                    "schema",
+                    "table",
+                    "migration",
+                    "model",
+                    "repository",
+                    "dao",
+                    "entity",
+                    "store",
+                    "storage",
+                    "persist",
+                ],
             ),
-            
             // API, Networking & Transport
             (
                 &[
-                    "api", "endpoint", "backend", "route", "http", "fetch", "axios", "handler",
-                    "controller", "service", "rest", "rpc", "ipc", "client", "transport"
+                    "api",
+                    "endpoint",
+                    "backend",
+                    "route",
+                    "http",
+                    "fetch",
+                    "axios",
+                    "handler",
+                    "controller",
+                    "service",
+                    "rest",
+                    "rpc",
+                    "ipc",
+                    "client",
+                    "transport",
                 ],
                 &[
-                    "api", "endpoint", "route", "handler", "controller", "service", "client",
-                    "request", "response", "fetch", "rpc", "ipc", "transport", "axios"
-                ]
+                    "api",
+                    "endpoint",
+                    "route",
+                    "handler",
+                    "controller",
+                    "service",
+                    "client",
+                    "request",
+                    "response",
+                    "fetch",
+                    "rpc",
+                    "ipc",
+                    "transport",
+                    "axios",
+                ],
             ),
-            
             // UI & Views
             (
                 &[
-                    "ui", "view", "component", "widget", "screen", "page", "modal", "dialog",
-                    "drawer", "button", "layout", "theme", "style", "css", "tailwind"
+                    "ui",
+                    "view",
+                    "component",
+                    "widget",
+                    "screen",
+                    "page",
+                    "modal",
+                    "dialog",
+                    "drawer",
+                    "button",
+                    "layout",
+                    "theme",
+                    "style",
+                    "css",
+                    "tailwind",
                 ],
                 &[
-                    "component", "view", "page", "screen", "widget", "modal", "dialog",
-                    "layout", "panel", "sidebar", "button", "theme", "style"
-                ]
+                    "component",
+                    "view",
+                    "page",
+                    "screen",
+                    "widget",
+                    "modal",
+                    "dialog",
+                    "layout",
+                    "panel",
+                    "sidebar",
+                    "button",
+                    "theme",
+                    "style",
+                ],
             ),
-            
             // Navigation & Routing
             (
-                &["router", "routing", "route", "nav", "navigation", "link", "page", "path"],
-                &["router", "route", "navigation", "nav", "page", "link", "param"]
+                &[
+                    "router",
+                    "routing",
+                    "route",
+                    "nav",
+                    "navigation",
+                    "link",
+                    "page",
+                    "path",
+                ],
+                &[
+                    "router",
+                    "route",
+                    "navigation",
+                    "nav",
+                    "page",
+                    "link",
+                    "param",
+                ],
             ),
-
             // Testing
             (
-                &["test", "spec", "mock", "unit", "e2e", "integration", "assert"],
-                &["test", "spec", "mock", "stub", "fixture", "suite"]
+                &[
+                    "test",
+                    "spec",
+                    "mock",
+                    "unit",
+                    "e2e",
+                    "integration",
+                    "assert",
+                ],
+                &["test", "spec", "mock", "stub", "fixture", "suite"],
             ),
         ];
 
@@ -287,19 +492,27 @@ impl ContextEngine {
     ) -> Vec<ContextScore> {
         let mut scores: HashMap<String, ContextScore> = HashMap::new();
 
-        let add_score = |scores: &mut HashMap<String, ContextScore>, path: &str, points: i32, reason: &str| {
-            let entry = scores.entry(path.to_string()).or_insert_with(|| ContextScore {
-                file_path: path.to_string(),
-                score: 0,
-                reasons: Vec::new(),
-            });
-            entry.score += points;
-            entry.reasons.push(reason.to_string());
-        };
+        let add_score =
+            |scores: &mut HashMap<String, ContextScore>, path: &str, points: i32, reason: &str| {
+                let entry = scores
+                    .entry(path.to_string())
+                    .or_insert_with(|| ContextScore {
+                        file_path: path.to_string(),
+                        score: 0,
+                        reasons: Vec::new(),
+                    });
+                entry.score += points;
+                entry.reasons.push(reason.to_string());
+            };
 
         // 1. Base heuristic: active open files are highly relevant
         for active in active_files {
-            add_score(&mut scores, active, 100, "User currently has this file open");
+            add_score(
+                &mut scores,
+                active,
+                100,
+                "User currently has this file open",
+            );
         }
 
         // 2. Semantic Concept Expansion for Deep Search
@@ -323,61 +536,123 @@ impl ContextEngine {
 
         // 3. Direct dependency signals from active files
         for active in active_files {
-            if let Ok(deps) = crate::services::graph::query_dependencies(db, active, Some(project_id)) {
+            if let Ok(deps) =
+                crate::services::graph::query_dependencies(db, active, Some(project_id))
+            {
                 for dep in deps {
-                    add_score(&mut scores, &dep.target, 40, &format!("Connected to active file via '{}'", dep.relationship));
+                    add_score(
+                        &mut scores,
+                        &dep.target,
+                        40,
+                        &format!("Connected to active file via '{}'", dep.relationship),
+                    );
                 }
             }
         }
 
         // 4. Semantic path & file stem matching across repository files
-        let walker = ignore::WalkBuilder::new(project_path).hidden(false).git_ignore(true).build();
-        
+        let walker = ignore::WalkBuilder::new(project_path)
+            .hidden(false)
+            .git_ignore(true)
+            .build();
+
         for result in walker.flatten() {
             if result.path().is_file() {
-                let rel_path = result.path().strip_prefix(project_path).unwrap_or(result.path()).to_string_lossy().replace("\\", "/");
-                
+                let rel_path = result
+                    .path()
+                    .strip_prefix(project_path)
+                    .unwrap_or(result.path())
+                    .to_string_lossy()
+                    .replace("\\", "/");
+
                 // Skip binaries and large node_modules
-                if rel_path.contains("node_modules") || rel_path.contains(".git") || rel_path.contains("target") {
+                if rel_path.contains("node_modules")
+                    || rel_path.contains(".git")
+                    || rel_path.contains("target")
+                {
                     continue;
                 }
 
                 let lower_rel = rel_path.to_lowercase();
-                let file_name = result.path().file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                let stem = result.path().file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
+                let file_name = result
+                    .path()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_lowercase();
+                let stem = result
+                    .path()
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_lowercase();
 
                 let mut matched_concepts = Vec::new();
                 for term in &semantic_terms {
-                    if lower_rel.contains(term) || file_name.contains(term) || (!stem.is_empty() && stem.contains(term)) {
+                    if lower_rel.contains(term)
+                        || file_name.contains(term)
+                        || (!stem.is_empty() && stem.contains(term))
+                    {
                         matched_concepts.push(term.as_str());
                     }
                 }
 
                 if !matched_concepts.is_empty() {
                     let points = (matched_concepts.len() * 25).min(75) as i32;
-                    add_score(&mut scores, &rel_path, points, &format!("Path matches semantic concepts [{}]", matched_concepts.join(", ")));
+                    add_score(
+                        &mut scores,
+                        &rel_path,
+                        points,
+                        &format!(
+                            "Path matches semantic concepts [{}]",
+                            matched_concepts.join(", ")
+                        ),
+                    );
                 }
             }
         }
 
         // 5. Multi-Hop Dependency & Topology Expansion
-        let initial_candidates: Vec<(String, i32)> = scores.iter()
+        let initial_candidates: Vec<(String, i32)> = scores
+            .iter()
             .map(|(p, cs)| (p.clone(), cs.score))
             .filter(|(_, s)| *s >= 40)
             .collect();
 
         for (candidate, _base_score) in &initial_candidates {
-            if let Ok(deps) = crate::services::graph::query_dependencies(db, candidate, Some(project_id)) {
+            if let Ok(deps) =
+                crate::services::graph::query_dependencies(db, candidate, Some(project_id))
+            {
                 for dep in deps {
                     let target = dep.target.clone();
                     if &target != candidate {
-                        add_score(&mut scores, &target, 35, &format!("Reachable via 1-hop dependency from '{}' ({})", candidate, dep.relationship));
-                        
+                        add_score(
+                            &mut scores,
+                            &target,
+                            35,
+                            &format!(
+                                "Reachable via 1-hop dependency from '{}' ({})",
+                                candidate, dep.relationship
+                            ),
+                        );
+
                         // 2-hop traversal
-                        if let Ok(deps_hop2) = crate::services::graph::query_dependencies(db, &target, Some(project_id)) {
+                        if let Ok(deps_hop2) = crate::services::graph::query_dependencies(
+                            db,
+                            &target,
+                            Some(project_id),
+                        ) {
                             for dep2 in deps_hop2 {
                                 if &dep2.target != candidate && dep2.target != target {
-                                    add_score(&mut scores, &dep2.target, 20, &format!("Reachable via 2-hop dependency from '{}' -> '{}' ({})", candidate, target, dep2.relationship));
+                                    add_score(
+                                        &mut scores,
+                                        &dep2.target,
+                                        20,
+                                        &format!(
+                                            "Reachable via 2-hop dependency from '{}' -> '{}' ({})",
+                                            candidate, target, dep2.relationship
+                                        ),
+                                    );
                                 }
                             }
                         }
@@ -389,7 +664,7 @@ impl ContextEngine {
         // Convert map to sorted vec
         let mut ranked: Vec<ContextScore> = scores.into_values().collect();
         ranked.sort_by_key(|b| std::cmp::Reverse(b.score));
-        
+
         // Return top 15 most relevant files
         ranked.into_iter().take(15).collect()
     }
@@ -402,22 +677,71 @@ impl ContextEngine {
         project_id: &str,
     ) -> Option<ExistingCapability> {
         let lower_obj = objective.to_lowercase();
-        
+
         let domains: &[(&str, &[&str], &[&str])] = &[
             (
                 "Authentication & Session Management",
-                &["auth", "authentication", "login", "signin", "signup", "session", "jwt", "credential", "oauth", "passkey", "user context"],
-                &["auth", "session", "login", "user", "jwt", "token", "credential", "provider", "store"],
+                &[
+                    "auth",
+                    "authentication",
+                    "login",
+                    "signin",
+                    "signup",
+                    "session",
+                    "jwt",
+                    "credential",
+                    "oauth",
+                    "passkey",
+                    "user context",
+                ],
+                &[
+                    "auth",
+                    "session",
+                    "login",
+                    "user",
+                    "jwt",
+                    "token",
+                    "credential",
+                    "provider",
+                    "store",
+                ],
             ),
             (
                 "State Management",
-                &["state management", "global state", "redux", "zustand", "context store", "store", "atoms"],
-                &["store", "context", "reducer", "zustand", "redux", "slice", "atom"],
+                &[
+                    "state management",
+                    "global state",
+                    "redux",
+                    "zustand",
+                    "context store",
+                    "store",
+                    "atoms",
+                ],
+                &[
+                    "store", "context", "reducer", "zustand", "redux", "slice", "atom",
+                ],
             ),
             (
                 "Database & ORM Layer",
-                &["database", "orm", "prisma", "drizzle", "sqlite", "postgres", "mysql", "migrations"],
-                &["db", "schema", "prisma", "drizzle", "model", "repository", "migration"],
+                &[
+                    "database",
+                    "orm",
+                    "prisma",
+                    "drizzle",
+                    "sqlite",
+                    "postgres",
+                    "mysql",
+                    "migrations",
+                ],
+                &[
+                    "db",
+                    "schema",
+                    "prisma",
+                    "drizzle",
+                    "model",
+                    "repository",
+                    "migration",
+                ],
             ),
             (
                 "Routing & Navigation",
@@ -453,15 +777,31 @@ impl ContextEngine {
 
                 // If DB has no symbols yet, scan files on disk
                 if matching_files.is_empty() {
-                    let walker = ignore::WalkBuilder::new(project_path).hidden(false).git_ignore(true).build();
+                    let walker = ignore::WalkBuilder::new(project_path)
+                        .hidden(false)
+                        .git_ignore(true)
+                        .build();
                     for entry in walker.flatten() {
                         if entry.path().is_file() {
-                            let rel = entry.path().strip_prefix(project_path).unwrap_or(entry.path()).to_string_lossy().replace("\\", "/");
-                            if rel.contains("node_modules") || rel.contains(".git") || rel.contains("target") {
+                            let rel = entry
+                                .path()
+                                .strip_prefix(project_path)
+                                .unwrap_or(entry.path())
+                                .to_string_lossy()
+                                .replace("\\", "/");
+                            if rel.contains("node_modules")
+                                || rel.contains(".git")
+                                || rel.contains("target")
+                            {
                                 continue;
                             }
                             let lower_rel = rel.to_lowercase();
-                            if search_keywords.iter().filter(|kw| lower_rel.contains(*kw)).count() >= 2 {
+                            if search_keywords
+                                .iter()
+                                .filter(|kw| lower_rel.contains(*kw))
+                                .count()
+                                >= 2
+                            {
                                 matching_files.push(rel);
                                 if matching_files.len() >= 5 {
                                     break;
@@ -496,7 +836,11 @@ impl ContextEngine {
             optimized.push_str("// [Optimized Context: Showing only imports and signatures]\n");
             for (i, line) in lines.iter().enumerate() {
                 let trimmed = line.trim();
-                if trimmed.starts_with("import ") || trimmed.starts_with("export ") || trimmed.starts_with("pub fn ") || trimmed.starts_with("class ") {
+                if trimmed.starts_with("import ")
+                    || trimmed.starts_with("export ")
+                    || trimmed.starts_with("pub fn ")
+                    || trimmed.starts_with("class ")
+                {
                     optimized.push_str(line);
                     optimized.push('\n');
                 } else if i < 20 {
@@ -522,7 +866,10 @@ mod tests {
         let concepts = ContextEngine::expand_semantic_concepts("make user login persistent");
         assert!(concepts.contains(&"login".to_string()));
         assert!(concepts.contains(&"session".to_string()));
-        assert!(concepts.contains(&"persist".to_string()) || concepts.contains(&"persistence".to_string()));
+        assert!(
+            concepts.contains(&"persist".to_string())
+                || concepts.contains(&"persistence".to_string())
+        );
         assert!(concepts.contains(&"store".to_string()));
         assert!(concepts.contains(&"provider".to_string()));
         assert!(concepts.contains(&"token".to_string()));
@@ -530,14 +877,27 @@ mod tests {
 
     #[test]
     fn test_multi_hop_dependency_retrieval() {
-        let temp_dir = std::env::temp_dir().join(format!("forge_context_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("forge_context_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir.join("src")).unwrap();
         let project_path = temp_dir.to_str().unwrap();
 
         // 1. Files on disk
-        std::fs::write(temp_dir.join("src/UserLogin.tsx"), "export const UserLogin = () => {};").unwrap();
-        std::fs::write(temp_dir.join("src/SessionProvider.tsx"), "export const SessionProvider = () => {};").unwrap();
-        std::fs::write(temp_dir.join("src/AuthStore.ts"), "export const authStore = {};").unwrap();
+        std::fs::write(
+            temp_dir.join("src/UserLogin.tsx"),
+            "export const UserLogin = () => {};",
+        )
+        .unwrap();
+        std::fs::write(
+            temp_dir.join("src/SessionProvider.tsx"),
+            "export const SessionProvider = () => {};",
+        )
+        .unwrap();
+        std::fs::write(
+            temp_dir.join("src/AuthStore.ts"),
+            "export const authStore = {};",
+        )
+        .unwrap();
 
         // 2. Setup SQLite with graph dependencies: UserLogin -> SessionProvider -> AuthStore
         let db_path = temp_dir.join("test_ctx.db");
@@ -582,14 +942,16 @@ mod tests {
 
     #[test]
     fn test_detect_existing_capability_auth() {
-        let temp_dir = std::env::temp_dir().join(format!("forge_cap_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("forge_cap_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir.join("src/services")).unwrap();
         let project_path = temp_dir.to_str().unwrap();
 
         std::fs::write(
             temp_dir.join("src/services/UserSessionManager.ts"),
             "export class UserSessionManager { getSession() {} }",
-        ).unwrap();
+        )
+        .unwrap();
 
         let db_path = temp_dir.join("test_cap.db");
         let conn = crate::db::init_db(&db_path).unwrap();
@@ -605,11 +967,18 @@ mod tests {
             ).unwrap();
         }
 
-        let cap = ContextEngine::detect_existing_capability(project_path, "Add authentication system", &db, &proj_id);
+        let cap = ContextEngine::detect_existing_capability(
+            project_path,
+            "Add authentication system",
+            &db,
+            &proj_id,
+        );
         assert!(cap.is_some());
         let capability = cap.unwrap();
         assert!(capability.domain.contains("Authentication"));
-        assert!(capability.primary_files.contains(&"src/services/UserSessionManager.ts".to_string()));
+        assert!(capability
+            .primary_files
+            .contains(&"src/services/UserSessionManager.ts".to_string()));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

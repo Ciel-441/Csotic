@@ -1,12 +1,12 @@
-use rusqlite::{Connection, Result, params};
-use serde::{Serialize, Deserialize};
+use rusqlite::{params, Connection, Result};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct Node {
     pub id: String, // e.g., "file:///src/main.rs" or "symbol://MyStruct"
     pub project_id: Option<String>,
-    pub kind: String, // "file", "function", "class"
+    pub kind: String,               // "file", "function", "class"
     pub properties: Option<String>, // JSON string
 }
 
@@ -75,7 +75,11 @@ pub fn insert_edge(db: &std::sync::Mutex<Connection>, edge: &Edge) -> Result<()>
     Ok(())
 }
 
-pub fn query_dependencies(db: &std::sync::Mutex<Connection>, id: &str, project_id: Option<&str>) -> Result<Vec<Edge>> {
+pub fn query_dependencies(
+    db: &std::sync::Mutex<Connection>,
+    id: &str,
+    project_id: Option<&str>,
+) -> Result<Vec<Edge>> {
     let conn = match db.lock() {
         Ok(c) => c,
         Err(e) => e.into_inner(),
@@ -96,7 +100,9 @@ pub fn query_dependencies(db: &std::sync::Mutex<Connection>, id: &str, project_i
         }
         Ok(edges)
     } else {
-        let mut stmt = conn.prepare("SELECT source, target, project_id, relationship FROM graph_edges WHERE source = ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT source, target, project_id, relationship FROM graph_edges WHERE source = ?1",
+        )?;
         let edges_iter = stmt.query_map(params![id], |row| {
             Ok(Edge {
                 source: row.get(0)?,
@@ -136,7 +142,7 @@ mod tests {
             kind: "file".to_string(),
             properties: None,
         };
-        
+
         insert_node(&db, &node1).unwrap();
         insert_node(&db, &node2).unwrap();
 
@@ -146,7 +152,7 @@ mod tests {
             project_id: Some("proj_1".to_string()),
             relationship: "imports".to_string(),
         };
-        
+
         insert_edge(&db, &edge).unwrap();
 
         let deps = query_dependencies(&db, "file1.rs", Some("proj_1")).unwrap();

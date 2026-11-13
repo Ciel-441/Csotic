@@ -58,20 +58,26 @@ pub fn emit_model_stream(app: &tauri::AppHandle, event: ModelStreamEvent) {
 }
 
 pub fn emit_file_edited(app: &tauri::AppHandle, request_id: &str, diff: FileDiff) {
-    let _ = app.emit("agent-file-edited", FileEditedEvent {
-        request_id: request_id.to_string(),
-        path: diff.path,
-        old_content: diff.old_content,
-        new_content: diff.new_content,
-    });
+    let _ = app.emit(
+        "agent-file-edited",
+        FileEditedEvent {
+            request_id: request_id.to_string(),
+            path: diff.path,
+            old_content: diff.old_content,
+            new_content: diff.new_content,
+        },
+    );
 }
 
 pub fn emit_agent_chat(app: &tauri::AppHandle, request_id: &str, text: &str, finished: bool) {
-    let _ = app.emit("agent-chat-response", AgentChatResponse {
-        request_id: Some(request_id.to_string()),
-        text: Some(text.to_string()),
-        finished: Some(finished),
-    });
+    let _ = app.emit(
+        "agent-chat-response",
+        AgentChatResponse {
+            request_id: Some(request_id.to_string()),
+            text: Some(text.to_string()),
+            finished: Some(finished),
+        },
+    );
 }
 
 pub fn emit_agent_state(
@@ -82,11 +88,14 @@ pub fn emit_agent_state(
     current_step_idx: Option<usize>,
     elapsed: std::time::Duration,
 ) {
-    let _ = app.emit("agent-state-update", AgentStateUpdate {
-        status: status.to_string(),
-        objective: objective.to_string(),
-        plan_steps: plan_steps.to_vec(),
-        current_step_idx,
-        elapsed_ms: elapsed.as_millis() as u64,
-    });
+    let _ = app.emit(
+        "agent-state-update",
+        AgentStateUpdate {
+            status: status.to_string(),
+            objective: objective.to_string(),
+            plan_steps: plan_steps.to_vec(),
+            current_step_idx,
+            elapsed_ms: elapsed.as_millis() as u64,
+        },
+    );
 }

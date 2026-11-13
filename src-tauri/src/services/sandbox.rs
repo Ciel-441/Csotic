@@ -10,11 +10,12 @@ pub fn run_in_sandbox(command: &str, project_path: &str) -> std::result::Result<
         "rust:alpine"
     };
 
-    let mount_mode = if command.contains("test") || command.contains("check") || command.contains("lint") {
-        ":ro"
-    } else {
-        ""
-    };
+    let mount_mode =
+        if command.contains("test") || command.contains("check") || command.contains("lint") {
+            ":ro"
+        } else {
+            ""
+        };
 
     let mut docker_cmd = Command::new("docker");
     docker_cmd.args([
@@ -45,17 +46,16 @@ pub fn run_in_sandbox(command: &str, project_path: &str) -> std::result::Result<
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Err(format!("Docker sandbox error:\n{}\n{}", stdout, stderr).trim().to_string())
+            Err(format!("Docker sandbox error:\n{}\n{}", stdout, stderr)
+                .trim()
+                .to_string())
         }
         Err(_) => {
             // Fallback to local shell bounded to project_path if Docker is unavailable
             let shell = if cfg!(windows) { "cmd" } else { "sh" };
             let flag = if cfg!(windows) { "/C" } else { "-c" };
             let mut local_cmd = Command::new(shell);
-            local_cmd
-                .arg(flag)
-                .arg(command)
-                .current_dir(project_path);
+            local_cmd.arg(flag).arg(command).current_dir(project_path);
 
             #[cfg(windows)]
             {
@@ -92,7 +92,10 @@ mod tests {
             }
             Err(e) => {
                 // If Docker isn't running on your machine, it safely falls back to a printed error.
-                println!("Sandbox test skipped/failed because Docker daemon might not be running: {}", e);
+                println!(
+                    "Sandbox test skipped/failed because Docker daemon might not be running: {}",
+                    e
+                );
             }
         }
     }

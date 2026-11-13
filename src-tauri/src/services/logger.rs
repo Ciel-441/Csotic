@@ -1,5 +1,5 @@
-use tracing::{info, error, debug};
 use serde::Serialize;
+use tracing::{debug, error, info};
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[allow(dead_code)]
@@ -22,9 +22,14 @@ impl std::fmt::Display for Subsystem {
 pub struct ForgeLogger;
 
 impl ForgeLogger {
-    pub fn log_event(subsystem: Subsystem, message: &str, duration: Option<std::time::Duration>, error_details: Option<&str>) {
+    pub fn log_event(
+        subsystem: Subsystem,
+        message: &str,
+        duration: Option<std::time::Duration>,
+        error_details: Option<&str>,
+    ) {
         let duration_ms = duration.map(|d| d.as_millis()).unwrap_or(0);
-        
+
         if let Some(err) = error_details {
             error!(
                 subsystem = %subsystem,

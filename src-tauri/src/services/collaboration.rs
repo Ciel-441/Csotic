@@ -5,7 +5,9 @@ pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::V
             Ok(serde_json::json!({ "session_id": session_id }))
         }
         "join_session" => {
-            let _session_id = payload.get("session_id").and_then(|v| v.as_str())
+            let _session_id = payload
+                .get("session_id")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'session_id'")?;
             Ok(serde_json::json!({ "joined": true }))
         }

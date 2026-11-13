@@ -1,10 +1,10 @@
-use std::fs;
-use std::path::PathBuf;
-use std::sync::Mutex;
-use std::time::{Instant, Duration};
 use crate::ipc::types::ErrorCode;
 use crate::services::models::{decode_secret, mask_for_display};
 use crate::services::observability::redact_secrets;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 static AUTH_RATE_LIMITER: Mutex<Option<Vec<Instant>>> = Mutex::new(None);
 
@@ -12,7 +12,10 @@ static AUTH_RATE_LIMITER: Mutex<Option<Vec<Instant>>> = Mutex::new(None);
 /// Allows at most 5 attempts per 30-second window.
 pub fn check_auth_rate_limit() -> Result<(), (ErrorCode, String)> {
     let mut guard = AUTH_RATE_LIMITER.lock().map_err(|_| {
-        (ErrorCode::Internal, "Internal authentication concurrency error".to_string())
+        (
+            ErrorCode::Internal,
+            "Internal authentication concurrency error".to_string(),
+        )
     })?;
     let now = Instant::now();
     let window = Duration::from_secs(30);
@@ -45,17 +48,33 @@ pub fn reset_auth_rate_limit_for_tests() {
 pub fn sanitize_error_message(msg: &str) -> String {
     let redacted = redact_secrets(msg);
     // Strip common local filesystem path patterns (e.g. C:\Users\... or /Users/...)
-    let lines: Vec<String> = redacted.lines().map(|line| {
-        let mut clean = line.to_string();
-        if clean.contains(":\\Users\\") || clean.contains(":\\users\\") || clean.contains("/home/") || clean.contains("/Users/") {
-            if let Some(pos) = clean.find(":\\Users\\").or_else(|| clean.find(":\\users\\")) {
-                let start = clean[..pos].rfind(|c: char| c.is_whitespace() || c == '\'' || c == '"' || c == '(').map(|i| i + 1).unwrap_or(0);
-                let end = clean[pos..].find(|c: char| c.is_whitespace() || c == '\'' || c == '"' || c == ')').map(|i| pos + i).unwrap_or(clean.len());
-                clean.replace_range(start..end, "[INTERNAL_PATH]");
+    let lines: Vec<String> = redacted
+        .lines()
+        .map(|line| {
+            let mut clean = line.to_string();
+            if clean.contains(":\\Users\\")
+                || clean.contains(":\\users\\")
+                || clean.contains("/home/")
+                || clean.contains("/Users/")
+            {
+                if let Some(pos) = clean
+                    .find(":\\Users\\")
+                    .or_else(|| clean.find(":\\users\\"))
+                {
+                    let start = clean[..pos]
+                        .rfind(|c: char| c.is_whitespace() || c == '\'' || c == '"' || c == '(')
+                        .map(|i| i + 1)
+                        .unwrap_or(0);
+                    let end = clean[pos..]
+                        .find(|c: char| c.is_whitespace() || c == '\'' || c == '"' || c == ')')
+                        .map(|i| pos + i)
+                        .unwrap_or(clean.len());
+                    clean.replace_range(start..end, "[INTERNAL_PATH]");
+                }
             }
-        }
-        clean
-    }).collect();
+            clean
+        })
+        .collect();
     lines.join("\n")
 }
 
@@ -79,26 +98,46 @@ fn get_auth_file_path() -> PathBuf {
 /// only their masked form is stored, since nothing in the app needs the raw token afterwards.
 fn write_session(session: &serde_json::Value) -> Result<(), (ErrorCode, String)> {
     let dir = get_forge_dir();
-    fs::create_dir_all(&dir)
-        .map_err(|e| (ErrorCode::Filesystem, format!("Failed to create session directory: {e}")))?;
-    let json_str = serde_json::to_string_pretty(session)
-        .map_err(|e| (ErrorCode::Internal, format!("Failed to serialize session: {e}")))?;
+    fs::create_dir_all(&dir).map_err(|e| {
+        (
+            ErrorCode::Filesystem,
+            format!("Failed to create session directory: {e}"),
+        )
+    })?;
+    let json_str = serde_json::to_string_pretty(session).map_err(|e| {
+        (
+            ErrorCode::Internal,
+            format!("Failed to serialize session: {e}"),
+        )
+    })?;
     let tmp = dir.join("auth.json.tmp");
-    fs::write(&tmp, json_str)
-        .map_err(|e| (ErrorCode::Filesystem, format!("Failed to save auth.json: {e}")))?;
+    fs::write(&tmp, json_str).map_err(|e| {
+        (
+            ErrorCode::Filesystem,
+            format!("Failed to save auth.json: {e}"),
+        )
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
     }
-    fs::rename(&tmp, get_auth_file_path())
-        .map_err(|e| (ErrorCode::Filesystem, format!("Failed to save auth.json: {e}")))
+    fs::rename(&tmp, get_auth_file_path()).map_err(|e| {
+        (
+            ErrorCode::Filesystem,
+            format!("Failed to save auth.json: {e}"),
+        )
+    })
 }
 
 /// Sanitize profile string inputs to avoid unbounded allocation or injection.
 /// Truncates by characters: byte slicing panics mid-UTF-8 (and release builds abort on panic).
 fn sanitize_profile_value(val: &str, max_len: usize) -> String {
-    val.trim().chars().filter(|c| !c.is_control()).take(max_len).collect()
+    val.trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(max_len)
+        .collect()
 }
 
 /// Verify that an avatar URL uses a safe protocol (https:// or data:image/).
@@ -109,10 +148,10 @@ pub fn sanitize_avatar_url(url: &str) -> String {
         return String::new();
     }
     let lower = trimmed.to_lowercase();
-    if (lower.starts_with("https://") || lower.starts_with("data:image/")) 
-        && trimmed.len() <= 2048 
-        && !trimmed.contains('\n') 
-        && !trimmed.contains('\r') 
+    if (lower.starts_with("https://") || lower.starts_with("data:image/"))
+        && trimmed.len() <= 2048
+        && !trimmed.contains('\n')
+        && !trimmed.contains('\r')
     {
         return trimmed.to_string();
     }
@@ -139,21 +178,26 @@ pub fn get_session() -> Result<serde_json::Value, (ErrorCode, String)> {
     if path.exists() {
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
-                let user_id = json.get("user")
+                let user_id = json
+                    .get("user")
                     .and_then(|u| u.get("id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let provider = json.get("provider")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let provider = json.get("provider").and_then(|v| v.as_str()).unwrap_or("");
 
                 // Invalidate mock or demo sessions
-                if user_id.is_empty() || user_id == "gh_developer" || user_id == "local_dev" || provider == "local" || user_id.starts_with("local_") {
+                if user_id.is_empty()
+                    || user_id == "gh_developer"
+                    || user_id == "local_dev"
+                    || provider == "local"
+                    || user_id.starts_with("local_")
+                {
                     let _ = fs::remove_file(&path);
                     return Ok(serde_json::json!({ "session": null }));
                 }
 
-                let stored_token = json.get("token")
+                let stored_token = json
+                    .get("token")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -167,7 +211,11 @@ pub fn get_session() -> Result<serde_json::Value, (ErrorCode, String)> {
                 if !stored_token.contains('\u{2022}') {
                     let raw_token = decode_secret(&stored_token);
                     let lower_token = raw_token.to_lowercase();
-                    if raw_token.is_empty() || lower_token.contains("demo") || lower_token.contains("mock") || raw_token == "gho_detected_local" {
+                    if raw_token.is_empty()
+                        || lower_token.contains("demo")
+                        || lower_token.contains("mock")
+                        || raw_token == "gho_detected_local"
+                    {
                         let _ = fs::remove_file(&path);
                         return Ok(serde_json::json!({ "session": null }));
                     }
@@ -253,17 +301,33 @@ pub async fn login_gh_cli() -> Result<serde_json::Value, (ErrorCode, String)> {
 pub async fn login_github_token(token: &str) -> Result<serde_json::Value, (ErrorCode, String)> {
     let clean_token = token.trim();
     if clean_token.is_empty() {
-        return Err((ErrorCode::Validation, "GitHub Personal Access Token is required".into()));
+        return Err((
+            ErrorCode::Validation,
+            "GitHub Personal Access Token is required".into(),
+        ));
     }
 
     let lower = clean_token.to_lowercase();
-    if lower.contains("demo") || lower.contains("mock") || lower.contains("dummy") || lower.contains("fake") || lower.starts_with("test_") || lower == "test" {
+    if lower.contains("demo")
+        || lower.contains("mock")
+        || lower.contains("dummy")
+        || lower.contains("fake")
+        || lower.starts_with("test_")
+        || lower == "test"
+    {
         return Err((ErrorCode::Validation, "Demo or mock tokens are strictly rejected. A genuine GitHub Personal Access Token is required.".into()));
     }
 
     // Input sanitation & length check
-    if clean_token.len() < 8 || clean_token.len() > 512 || !clean_token.is_ascii() || clean_token.contains(|c: char| c.is_whitespace() || c.is_control()) {
-        return Err((ErrorCode::Validation, "Invalid GitHub token format or characters".into()));
+    if clean_token.len() < 8
+        || clean_token.len() > 512
+        || !clean_token.is_ascii()
+        || clean_token.contains(|c: char| c.is_whitespace() || c.is_control())
+    {
+        return Err((
+            ErrorCode::Validation,
+            "Invalid GitHub token format or characters".into(),
+        ));
     }
 
     // Rate limit check
@@ -273,7 +337,12 @@ pub async fn login_github_token(token: &str) -> Result<serde_json::Value, (Error
         .user_agent("Csotic-IDE/0.1.0")
         .timeout(std::time::Duration::from_secs(12))
         .build()
-        .map_err(|_| (ErrorCode::Internal, "Failed to initialize HTTP client".to_string()))?;
+        .map_err(|_| {
+            (
+                ErrorCode::Internal,
+                "Failed to initialize HTTP client".to_string(),
+            )
+        })?;
 
     // 1. Fetch user profile from GitHub API
     let resp = client
@@ -282,7 +351,12 @@ pub async fn login_github_token(token: &str) -> Result<serde_json::Value, (Error
         .header("Accept", "application/vnd.github.v3+json")
         .send()
         .await
-        .map_err(|_| (ErrorCode::Network, "Unable to connect to GitHub. Please check your internet connection.".to_string()))?;
+        .map_err(|_| {
+            (
+                ErrorCode::Network,
+                "Unable to connect to GitHub. Please check your internet connection.".to_string(),
+            )
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -297,10 +371,12 @@ pub async fn login_github_token(token: &str) -> Result<serde_json::Value, (Error
         return Err((ErrorCode::Validation, safe_msg));
     }
 
-    let user_data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (ErrorCode::Internal, format!("Failed to parse GitHub profile: {e}")))?;
+    let user_data: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            ErrorCode::Internal,
+            format!("Failed to parse GitHub profile: {e}"),
+        )
+    })?;
 
     let user_id = user_data
         .get("id")
@@ -321,7 +397,12 @@ pub async fn login_github_token(token: &str) -> Result<serde_json::Value, (Error
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let avatar_url = sanitize_avatar_url(user_data.get("avatar_url").and_then(|v| v.as_str()).unwrap_or(""));
+    let avatar_url = sanitize_avatar_url(
+        user_data
+            .get("avatar_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    );
     let bio = user_data
         .get("bio")
         .and_then(|v| v.as_str())
@@ -353,9 +434,10 @@ pub async fn login_github_token(token: &str) -> Result<serde_json::Value, (Error
         {
             if emails_resp.status().is_success() {
                 if let Ok(emails) = emails_resp.json::<Vec<serde_json::Value>>().await {
-                    if let Some(primary) = emails.iter().find(|e| {
-                        e.get("primary").and_then(|v| v.as_bool()).unwrap_or(false)
-                    }) {
+                    if let Some(primary) = emails
+                        .iter()
+                        .find(|e| e.get("primary").and_then(|v| v.as_bool()).unwrap_or(false))
+                    {
                         if let Some(em) = primary.get("email").and_then(|v| v.as_str()) {
                             email = em.to_string();
                         }
@@ -405,7 +487,9 @@ pub async fn login_github_token(token: &str) -> Result<serde_json::Value, (Error
     }))
 }
 
-pub async fn login_google(payload: &serde_json::Value) -> Result<serde_json::Value, (ErrorCode, String)> {
+pub async fn login_google(
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, (ErrorCode, String)> {
     let token = payload
         .get("token")
         .and_then(|v| v.as_str())
@@ -421,14 +505,24 @@ pub async fn login_google(payload: &serde_json::Value) -> Result<serde_json::Val
     }
 
     let lower = token.to_lowercase();
-    if lower.contains("demo") || lower.contains("mock") || lower.contains("dummy") || lower.contains("fake") || lower.starts_with("test_") || lower == "test" {
+    if lower.contains("demo")
+        || lower.contains("mock")
+        || lower.contains("dummy")
+        || lower.contains("fake")
+        || lower.starts_with("test_")
+        || lower == "test"
+    {
         return Err((
             ErrorCode::Validation,
             "Demo or mock tokens are strictly rejected. A genuine Google OAuth Access Token is required.".into(),
         ));
     }
 
-    if token.len() < 10 || token.len() > 2048 || !token.is_ascii() || token.contains(|c: char| c.is_whitespace() || c.is_control()) {
+    if token.len() < 10
+        || token.len() > 2048
+        || !token.is_ascii()
+        || token.contains(|c: char| c.is_whitespace() || c.is_control())
+    {
         return Err((
             ErrorCode::Validation,
             "Invalid Google OAuth Access Token format".into(),
@@ -442,36 +536,60 @@ pub async fn login_google(payload: &serde_json::Value) -> Result<serde_json::Val
         .user_agent("Csotic-IDE/0.1.0")
         .timeout(std::time::Duration::from_secs(12))
         .build()
-        .map_err(|_| (ErrorCode::Internal, "Failed to initialize HTTP client".to_string()))?;
+        .map_err(|_| {
+            (
+                ErrorCode::Internal,
+                "Failed to initialize HTTP client".to_string(),
+            )
+        })?;
 
     let resp = client
         .get("https://www.googleapis.com/oauth2/v3/userinfo")
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .await
-        .map_err(|_| (ErrorCode::Network, "Unable to connect to Google API. Please check your internet connection.".to_string()))?;
+        .map_err(|_| {
+            (
+                ErrorCode::Network,
+                "Unable to connect to Google API. Please check your internet connection."
+                    .to_string(),
+            )
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let safe_msg = match status.as_u16() {
-            401 => "Google authentication failed: OAuth Access Token is invalid, expired, or revoked.".to_string(),
+            401 => {
+                "Google authentication failed: OAuth Access Token is invalid, expired, or revoked."
+                    .to_string()
+            }
             403 => "Google access denied: Token lacks necessary userinfo permissions.".to_string(),
-            429 => "Google API rate limit exceeded. Please wait a few minutes before trying again.".to_string(),
-            500..=599 => "Google API is currently experiencing an outage. Please try again later.".to_string(),
-            code => format!("Google authentication failed with status {code}. Please verify your token."),
+            429 => "Google API rate limit exceeded. Please wait a few minutes before trying again."
+                .to_string(),
+            500..=599 => "Google API is currently experiencing an outage. Please try again later."
+                .to_string(),
+            code => format!(
+                "Google authentication failed with status {code}. Please verify your token."
+            ),
         };
         return Err((ErrorCode::Validation, safe_msg));
     }
 
-    let g_user: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (ErrorCode::Internal, format!("Failed to parse Google user response: {e}")))?;
+    let g_user: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            ErrorCode::Internal,
+            format!("Failed to parse Google user response: {e}"),
+        )
+    })?;
 
-    let user_id = g_user.get("sub").and_then(|v| v.as_str()).unwrap_or("google_user");
+    let user_id = g_user
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .unwrap_or("google_user");
     let email = g_user.get("email").and_then(|v| v.as_str()).unwrap_or("");
     let name = g_user.get("name").and_then(|v| v.as_str()).unwrap_or(email);
-    let avatar_url = sanitize_avatar_url(g_user.get("picture").and_then(|v| v.as_str()).unwrap_or(""));
+    let avatar_url =
+        sanitize_avatar_url(g_user.get("picture").and_then(|v| v.as_str()).unwrap_or(""));
     let username = if !email.is_empty() {
         email.split('@').next().unwrap_or(name).to_string()
     } else {
@@ -517,13 +635,21 @@ pub fn save_profile(profile: &serde_json::Value) -> Result<serde_json::Value, (E
         ));
     }
 
-    let raw_session = fs::read_to_string(&path)
-        .map_err(|e| (ErrorCode::Filesystem, format!("Failed to read auth session: {e}")))?;
+    let raw_session = fs::read_to_string(&path).map_err(|e| {
+        (
+            ErrorCode::Filesystem,
+            format!("Failed to read auth session: {e}"),
+        )
+    })?;
 
     let mut current_session: serde_json::Value = serde_json::from_str(&raw_session)
         .map_err(|e| (ErrorCode::Internal, format!("Failed to parse session: {e}")))?;
 
-    let stored_token = current_session.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let stored_token = current_session
+        .get("token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if current_session.get("user").is_none() || stored_token.is_empty() {
         return Err((
             ErrorCode::Validation,
@@ -532,9 +658,15 @@ pub fn save_profile(profile: &serde_json::Value) -> Result<serde_json::Value, (E
     }
 
     let raw_name = profile.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let raw_username = profile.get("username").and_then(|v| v.as_str()).unwrap_or("");
+    let raw_username = profile
+        .get("username")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let raw_email = profile.get("email").and_then(|v| v.as_str()).unwrap_or("");
-    let raw_avatar = profile.get("avatarUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let raw_avatar = profile
+        .get("avatarUrl")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let raw_bio = profile.get("bio").and_then(|v| v.as_str()).unwrap_or("");
 
     let name = sanitize_profile_value(raw_name, 100);
@@ -551,13 +683,15 @@ pub fn save_profile(profile: &serde_json::Value) -> Result<serde_json::Value, (E
     let avatar_url = sanitize_avatar_url(raw_avatar);
     let bio = sanitize_profile_value(raw_bio, 500);
 
-    let user_id = current_session.get("user")
+    let user_id = current_session
+        .get("user")
         .and_then(|u| u.get("id"))
         .and_then(|v| v.as_str())
         .unwrap_or("user")
         .to_string();
 
-    let provider = current_session.get("provider")
+    let provider = current_session
+        .get("provider")
         .and_then(|v| v.as_str())
         .unwrap_or("github")
         .to_string();
@@ -580,7 +714,8 @@ pub fn save_profile(profile: &serde_json::Value) -> Result<serde_json::Value, (E
 
     // Never write or hand back a raw (legacy) token.
     if !stored_token.contains('\u{2022}') {
-        current_session["token"] = serde_json::json!(mask_for_display(&decode_secret(&stored_token)));
+        current_session["token"] =
+            serde_json::json!(mask_for_display(&decode_secret(&stored_token)));
     }
     current_session["hasToken"] = serde_json::json!(true);
     write_session(&current_session)?;
@@ -611,10 +746,7 @@ pub async fn handle_action(
         "detect_local_identity" => detect_local_identity(),
         "login_gh_cli" => login_gh_cli().await,
         "login_github_token" => {
-            let token = payload
-                .get("token")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let token = payload.get("token").and_then(|v| v.as_str()).unwrap_or("");
             login_github_token(token).await
         }
         "login_google" => login_google(payload).await,
@@ -648,10 +780,16 @@ mod tests {
 
     #[test]
     fn test_avatar_url_sanitization() {
-        assert_eq!(sanitize_avatar_url("https://avatars.githubusercontent.com/u/123"), "https://avatars.githubusercontent.com/u/123");
+        assert_eq!(
+            sanitize_avatar_url("https://avatars.githubusercontent.com/u/123"),
+            "https://avatars.githubusercontent.com/u/123"
+        );
         assert_eq!(sanitize_avatar_url("http://example.com/pic.png"), "");
-        assert_eq!(sanitize_avatar_url("data:image/png;base64,iVBOR..."), "data:image/png;base64,iVBOR...");
-        
+        assert_eq!(
+            sanitize_avatar_url("data:image/png;base64,iVBOR..."),
+            "data:image/png;base64,iVBOR..."
+        );
+
         // Malicious or invalid protocols must be rejected
         assert_eq!(sanitize_avatar_url("javascript:alert(1)"), "");
         assert_eq!(sanitize_avatar_url("vbscript:msgbox(1)"), "");
@@ -665,10 +803,10 @@ mod tests {
         let encrypted = crate::services::models::encode_secret(token);
         assert!(encrypted.starts_with("enc_v"));
         assert!(!encrypted.contains(token));
-        
+
         let decrypted = decode_secret(&encrypted);
         assert_eq!(decrypted, token);
-        
+
         let masked = mask_for_display(token);
         assert!(masked.contains('•'));
         assert_ne!(masked, token);
@@ -679,7 +817,10 @@ mod tests {
         let payload = serde_json::json!({ "token": "" });
         let res = login_google(&payload).await;
         assert!(res.is_err());
-        assert!(res.unwrap_err().1.contains("Google OAuth Access Token is required"));
+        assert!(res
+            .unwrap_err()
+            .1
+            .contains("Google OAuth Access Token is required"));
     }
 
     #[tokio::test]
@@ -692,14 +833,17 @@ mod tests {
         });
         let res = login_google(&payload).await;
         assert!(res.is_err());
-        assert!(res.unwrap_err().1.contains("Google OAuth Access Token is required"));
+        assert!(res
+            .unwrap_err()
+            .1
+            .contains("Google OAuth Access Token is required"));
     }
 
     #[tokio::test]
     async fn test_github_login_rejects_malformed_token() {
         let res = login_github_token("").await;
         assert!(res.is_err());
-        
+
         let res2 = login_github_token("short").await;
         assert!(res2.is_err());
         assert!(res2.unwrap_err().1.contains("Invalid GitHub token format"));
@@ -715,14 +859,20 @@ mod tests {
         let _ = fs::remove_file(get_auth_file_path());
         let res = save_profile(&profile);
         assert!(res.is_err());
-        assert!(res.unwrap_err().1.contains("No active authenticated session found"));
+        assert!(res
+            .unwrap_err()
+            .1
+            .contains("No active authenticated session found"));
     }
 
     #[tokio::test]
     async fn test_github_login_rejects_demo_token() {
         let res = login_github_token("demo_account_token").await;
         assert!(res.is_err());
-        assert!(res.unwrap_err().1.contains("Demo or mock tokens are strictly rejected"));
+        assert!(res
+            .unwrap_err()
+            .1
+            .contains("Demo or mock tokens are strictly rejected"));
     }
 
     #[tokio::test]
@@ -731,14 +881,20 @@ mod tests {
         let payload = serde_json::json!({ "token": "ya29.demo_token_12345" });
         let res = login_google(&payload).await;
         assert!(res.is_err());
-        assert!(res.unwrap_err().1.contains("Demo or mock tokens are strictly rejected"));
+        assert!(res
+            .unwrap_err()
+            .1
+            .contains("Demo or mock tokens are strictly rejected"));
     }
 
     #[test]
     fn test_profile_values_truncate_on_char_boundaries() {
         let long = "\u{e9}".repeat(200);
         assert_eq!(sanitize_profile_value(&long, 100).chars().count(), 100);
-        assert_eq!(mask_for_display("abcd-\u{43a}\u{43b}\u{44e}\u{447}-wxyz"), "abcd\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}wxyz");
+        assert_eq!(
+            mask_for_display("abcd-\u{43a}\u{43b}\u{44e}\u{447}-wxyz"),
+            "abcd\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}wxyz"
+        );
     }
 
     #[test]

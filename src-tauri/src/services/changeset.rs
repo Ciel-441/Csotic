@@ -10,10 +10,10 @@
 //!    - Task-level rollback (`rollback_task`) rolls back all mutations across all turns for the task.
 //! 5. **Crash Resilience**: Rollback records survive application crashes and restarts via durable SQLite storage.
 
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use serde::{Deserialize, Serialize};
-use rusqlite::Connection;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChangeSetState {
@@ -142,7 +142,9 @@ fn apply_rollback_record(project_path: &str, record: &RollbackRecord) -> Result<
     // 1. Move / rename rollback
     if let (Some(src), Some(dest)) = (&record.source_path, &record.destination_path) {
         // Conflict Check: destination current hash must match the hash recorded when AI moved the file
-        if let Ok((_curr_content, curr_hash)) = crate::services::filesystem::read_file_with_hash(project_path, dest) {
+        if let Ok((_curr_content, curr_hash)) =
+            crate::services::filesystem::read_file_with_hash(project_path, dest)
+        {
             if let Some(applied_hash) = &record.hash_after_apply {
                 if &curr_hash != applied_hash && curr_hash != record.original_hash {
                     return Err(format!(
@@ -169,10 +171,17 @@ fn apply_rollback_record(project_path: &str, record: &RollbackRecord) -> Result<
         }
 
         if let Err(e) = crate::services::filesystem::move_file_strict(project_path, dest, src) {
-            return Err(format!("Cannot restore moved file from '{}' to '{}': {}", dest, src, e));
+            return Err(format!(
+                "Cannot restore moved file from '{}' to '{}': {}",
+                dest, src, e
+            ));
         } else {
             if let Some(prev_dest_content) = &record.destination_before_state {
-                let _ = crate::services::filesystem::restore_file_for_rollback(project_path, dest, prev_dest_content);
+                let _ = crate::services::filesystem::restore_file_for_rollback(
+                    project_path,
+                    dest,
+                    prev_dest_content,
+                );
             }
             return Ok(format!("Moved '{}' back to '{}'", dest, src));
         }
@@ -180,7 +189,9 @@ fn apply_rollback_record(project_path: &str, record: &RollbackRecord) -> Result<
 
     // 2. Newly created file rollback (delete it)
     if record.was_newly_created {
-        if let Ok((_curr_content, curr_hash)) = crate::services::filesystem::read_file_with_hash(project_path, &record.path) {
+        if let Ok((_curr_content, curr_hash)) =
+            crate::services::filesystem::read_file_with_hash(project_path, &record.path)
+        {
             if let Some(applied_hash) = &record.hash_after_apply {
                 if &curr_hash != applied_hash {
                     return Err(format!(
@@ -192,11 +203,16 @@ fn apply_rollback_record(project_path: &str, record: &RollbackRecord) -> Result<
         }
         match crate::services::filesystem::delete_file_strict(project_path, &record.path, true) {
             Ok(_) => Ok(format!("Deleted newly created {}", record.path)),
-            Err(e) => Err(format!("Failed to delete newly created '{}': {}", record.path, e)),
+            Err(e) => Err(format!(
+                "Failed to delete newly created '{}': {}",
+                record.path, e
+            )),
         }
     } else if let Some(orig_content) = &record.original_content {
         // 3. Modified file rollback (restore original content)
-        if let Ok((_curr_content, curr_hash)) = crate::services::filesystem::read_file_with_hash(project_path, &record.path) {
+        if let Ok((_curr_content, curr_hash)) =
+            crate::services::filesystem::read_file_with_hash(project_path, &record.path)
+        {
             if let Some(applied_hash) = &record.hash_after_apply {
                 if &curr_hash != applied_hash && curr_hash != record.original_hash {
                     return Err(format!(
@@ -209,7 +225,11 @@ fn apply_rollback_record(project_path: &str, record: &RollbackRecord) -> Result<
             }
         }
 
-        match crate::services::filesystem::restore_file_for_rollback(project_path, &record.path, orig_content) {
+        match crate::services::filesystem::restore_file_for_rollback(
+            project_path,
+            &record.path,
+            orig_content,
+        ) {
             Ok(_) => Ok(format!(
                 "Reverted {} to original state (hash: {})",
                 record.path,
@@ -303,7 +323,13 @@ impl RollbackJournal {
         }
     }
 
-    pub fn record_applied_hash(&self, task_id: &str, path: &str, after_hash: &str, db: Option<&Mutex<Connection>>) {
+    pub fn record_applied_hash(
+        &self,
+        task_id: &str,
+        path: &str,
+        after_hash: &str,
+        db: Option<&Mutex<Connection>>,
+    ) {
         let mut guard = self.lock_journals();
         if let Some(list) = guard.get_mut(task_id) {
             if let Some(record) = list.iter_mut().find(|r| r.path == path) {
@@ -382,7 +408,12 @@ impl RollbackJournal {
     }
 
     /// Persist current in-memory records to SQLite DB changesets table
-    pub fn persist_to_db(&self, db: &Mutex<Connection>, task_id: &str, project_id: Option<&str>) -> Result<(), String> {
+    pub fn persist_to_db(
+        &self,
+        db: &Mutex<Connection>,
+        task_id: &str,
+        project_id: Option<&str>,
+    ) -> Result<(), String> {
         let records = {
             let guard = self.lock_journals();
             guard.get(task_id).cloned().unwrap_or_default()
@@ -396,7 +427,8 @@ impl RollbackJournal {
             "INSERT OR REPLACE INTO changesets (id, task_id, project_id, state, reason, created_at)
              VALUES (?1, ?2, ?3, 'Applied', 'Task Execution ChangeSet', ?4)",
             rusqlite::params![changeset_id, task_id, project_id, now],
-        ).map_err(|e| format!("DB error saving changeset: {e}"))?;
+        )
+        .map_err(|e| format!("DB error saving changeset: {e}"))?;
 
         for (seq, rec) in records.iter().enumerate() {
             let op_id = format!("{}_{}", changeset_id, seq);
@@ -425,7 +457,8 @@ impl RollbackJournal {
                     rec.original_hash,
                     rec.hash_after_apply,
                 ],
-            ).map_err(|e| format!("DB error saving changeset operation: {e}"))?;
+            )
+            .map_err(|e| format!("DB error saving changeset operation: {e}"))?;
         }
 
         Ok(())
@@ -443,7 +476,8 @@ impl RollbackJournal {
         let mut records: Vec<RollbackRecord> = {
             let mut guard = self.lock_journals();
             if let Some(list) = guard.get_mut(task_id) {
-                let (matching, remaining): (Vec<_>, Vec<_>) = list.drain(..).partition(|r| r.turn_idx == turn_idx);
+                let (matching, remaining): (Vec<_>, Vec<_>) =
+                    list.drain(..).partition(|r| r.turn_idx == turn_idx);
                 *list = remaining;
                 matching
             } else {
@@ -464,22 +498,24 @@ impl RollbackJournal {
                          ORDER BY sequence DESC"
                     ).map_err(|e| format!("DB prepare error: {e}"))?;
 
-                    let rows = stmt.query_map(rusqlite::params![task_id, turn_idx as i64], |row| {
-                        let was_created: i64 = row.get(7)?;
-                        Ok(RollbackRecord {
-                            task_id: row.get(1)?,
-                            turn_idx: row.get::<_, i64>(2)? as usize,
-                            sequence: row.get::<_, i64>(3)? as usize,
-                            path: row.get(4)?,
-                            original_hash: row.get(5)?,
-                            original_content: row.get(6)?,
-                            was_newly_created: was_created == 1,
-                            hash_after_apply: row.get(8)?,
-                            source_path: row.get(9)?,
-                            destination_path: row.get(10)?,
-                            destination_before_state: row.get(11)?,
+                    let rows = stmt
+                        .query_map(rusqlite::params![task_id, turn_idx as i64], |row| {
+                            let was_created: i64 = row.get(7)?;
+                            Ok(RollbackRecord {
+                                task_id: row.get(1)?,
+                                turn_idx: row.get::<_, i64>(2)? as usize,
+                                sequence: row.get::<_, i64>(3)? as usize,
+                                path: row.get(4)?,
+                                original_hash: row.get(5)?,
+                                original_content: row.get(6)?,
+                                was_newly_created: was_created == 1,
+                                hash_after_apply: row.get(8)?,
+                                source_path: row.get(9)?,
+                                destination_path: row.get(10)?,
+                                destination_before_state: row.get(11)?,
+                            })
                         })
-                    }).map_err(|e| format!("DB query error: {e}"))?;
+                        .map_err(|e| format!("DB query error: {e}"))?;
 
                     for r in rows.flatten() {
                         records.push(r);
@@ -519,7 +555,11 @@ impl RollbackJournal {
             if reverted_files.is_empty() {
                 return Err(conflicts.join("\n"));
             } else {
-                return Err(format!("Partial turn rollback with conflicts:\n{}\nReverted:\n{}", conflicts.join("\n"), reverted_files.join("\n")));
+                return Err(format!(
+                    "Partial turn rollback with conflicts:\n{}\nReverted:\n{}",
+                    conflicts.join("\n"),
+                    reverted_files.join("\n")
+                ));
             }
         }
 
@@ -552,22 +592,24 @@ impl RollbackJournal {
                          ORDER BY sequence DESC"
                     ).map_err(|e| format!("DB prepare error: {e}"))?;
 
-                    let rows = stmt.query_map(rusqlite::params![task_id], |row| {
-                        let was_created: i64 = row.get(7)?;
-                        Ok(RollbackRecord {
-                            task_id: row.get(1)?,
-                            turn_idx: row.get::<_, i64>(2)? as usize,
-                            sequence: row.get::<_, i64>(3)? as usize,
-                            path: row.get(4)?,
-                            original_hash: row.get(5)?,
-                            original_content: row.get(6)?,
-                            was_newly_created: was_created == 1,
-                            hash_after_apply: row.get(8)?,
-                            source_path: row.get(9)?,
-                            destination_path: row.get(10)?,
-                            destination_before_state: row.get(11)?,
+                    let rows = stmt
+                        .query_map(rusqlite::params![task_id], |row| {
+                            let was_created: i64 = row.get(7)?;
+                            Ok(RollbackRecord {
+                                task_id: row.get(1)?,
+                                turn_idx: row.get::<_, i64>(2)? as usize,
+                                sequence: row.get::<_, i64>(3)? as usize,
+                                path: row.get(4)?,
+                                original_hash: row.get(5)?,
+                                original_content: row.get(6)?,
+                                was_newly_created: was_created == 1,
+                                hash_after_apply: row.get(8)?,
+                                source_path: row.get(9)?,
+                                destination_path: row.get(10)?,
+                                destination_before_state: row.get(11)?,
+                            })
                         })
-                    }).map_err(|e| format!("DB query error: {e}"))?;
+                        .map_err(|e| format!("DB query error: {e}"))?;
 
                     for r in rows.flatten() {
                         records.push(r);
@@ -606,7 +648,11 @@ impl RollbackJournal {
             if reverted_files.is_empty() {
                 return Err(conflicts.join("\n"));
             } else {
-                return Err(format!("Partial rollback with conflicts:\n{}\nReverted:\n{}", conflicts.join("\n"), reverted_files.join("\n")));
+                return Err(format!(
+                    "Partial rollback with conflicts:\n{}\nReverted:\n{}",
+                    conflicts.join("\n"),
+                    reverted_files.join("\n")
+                ));
             }
         }
 
@@ -629,7 +675,8 @@ impl RollbackJournal {
     }
 }
 
-pub static GLOBAL_ROLLBACK_JOURNAL: std::sync::OnceLock<RollbackJournal> = std::sync::OnceLock::new();
+pub static GLOBAL_ROLLBACK_JOURNAL: std::sync::OnceLock<RollbackJournal> =
+    std::sync::OnceLock::new();
 
 pub fn get_rollback_journal() -> &'static RollbackJournal {
     GLOBAL_ROLLBACK_JOURNAL.get_or_init(RollbackJournal::new)
@@ -665,7 +712,7 @@ impl ChangeSetValidator {
 
         for op in &changeset.operations {
             let path = op.target_path();
-            
+
             // Check for duplicate or conflicting operations on the same path
             if !path.is_empty() {
                 match op {
@@ -691,7 +738,10 @@ impl ChangeSetValidator {
                     }
                 }
 
-                if seen_paths.contains(path) && !seen_creates.contains(path) && !seen_deletes.contains(path) {
+                if seen_paths.contains(path)
+                    && !seen_creates.contains(path)
+                    && !seen_deletes.contains(path)
+                {
                     warnings.push(format!("Multiple operations detected on same path '{}'. Operations should be normalized.", path));
                 }
                 seen_paths.insert(path.to_string());
@@ -703,7 +753,10 @@ impl ChangeSetValidator {
                     if path.trim().is_empty() {
                         errors.push("Invalid path: file path cannot be empty.".to_string());
                     }
-                    if crate::services::project_state::ProjectDetector::is_suspicious_recreation(project_state, path) {
+                    if crate::services::project_state::ProjectDetector::is_suspicious_recreation(
+                        project_state,
+                        path,
+                    ) {
                         errors.push(format!(
                             "PROJECT_RECREATION_DETECTED: '{}' already exists or is a root manifest in this project. Modifying or patching should be used instead of recreation.",
                             path
@@ -716,7 +769,11 @@ impl ChangeSetValidator {
                         ));
                     }
                 }
-                ChangeOperation::Modify { path, expected_hash, .. } => {
+                ChangeOperation::Modify {
+                    path,
+                    expected_hash,
+                    ..
+                } => {
                     files_modified += 1;
                     if path.trim().is_empty() {
                         errors.push("Invalid path: file path cannot be empty.".to_string());
@@ -725,7 +782,12 @@ impl ChangeSetValidator {
                         warnings.push(format!("Modify on '{}' has empty expected_hash; optimistic concurrency check disabled.", path));
                     }
                 }
-                ChangeOperation::Patch { path, expected_hash, target, .. } => {
+                ChangeOperation::Patch {
+                    path,
+                    expected_hash,
+                    target,
+                    ..
+                } => {
                     files_modified += 1;
                     if path.trim().is_empty() {
                         errors.push("Invalid path: file path cannot be empty.".to_string());
@@ -746,20 +808,38 @@ impl ChangeSetValidator {
                         errors.push(format!("PERMISSION_DENIED: Deletion of '{}' requires explicit approved=true confirmation.", path));
                     }
                 }
-                ChangeOperation::Move { source, destination } => {
+                ChangeOperation::Move {
+                    source,
+                    destination,
+                } => {
                     if source.trim().is_empty() || destination.trim().is_empty() {
-                        errors.push("Invalid move: source and destination paths cannot be empty.".to_string());
+                        errors.push(
+                            "Invalid move: source and destination paths cannot be empty."
+                                .to_string(),
+                        );
                     }
                     if source == destination {
-                        errors.push(format!("Invalid move: source and destination are identical ('{}').", source));
+                        errors.push(format!(
+                            "Invalid move: source and destination are identical ('{}').",
+                            source
+                        ));
                     }
                 }
-                ChangeOperation::Copy { source, destination } => {
+                ChangeOperation::Copy {
+                    source,
+                    destination,
+                } => {
                     if source.trim().is_empty() || destination.trim().is_empty() {
-                        errors.push("Invalid copy: source and destination paths cannot be empty.".to_string());
+                        errors.push(
+                            "Invalid copy: source and destination paths cannot be empty."
+                                .to_string(),
+                        );
                     }
                     if source == destination {
-                        errors.push(format!("Invalid copy: source and destination are identical ('{}').", source));
+                        errors.push(format!(
+                            "Invalid copy: source and destination are identical ('{}').",
+                            source
+                        ));
                     }
                 }
                 ChangeOperation::CreateDirectory { path } => {
@@ -767,7 +847,11 @@ impl ChangeSetValidator {
                         errors.push("Invalid create directory: path is empty.".to_string());
                     }
                 }
-                ChangeOperation::Replace { path, expected_hash, .. } => {
+                ChangeOperation::Replace {
+                    path,
+                    expected_hash,
+                    ..
+                } => {
                     files_modified += 1;
                     if path.trim().is_empty() {
                         errors.push("Invalid path: file path cannot be empty.".to_string());
@@ -829,7 +913,8 @@ impl ChangeSetEngine {
             "INSERT OR REPLACE INTO changesets (id, task_id, project_id, state, reason, created_at)
              VALUES (?1, ?2, ?3, 'Planned', ?4, ?5)",
             rusqlite::params![changeset_id, task_id, project_id, reason, now],
-        ).map_err(|e| format!("DB error initializing changeset: {e}"))?;
+        )
+        .map_err(|e| format!("DB error initializing changeset: {e}"))?;
         Ok(())
     }
 
@@ -893,7 +978,13 @@ impl ChangeSetEngine {
         let summary = ChangeSetValidator::validate(project_state, &changeset);
         if !summary.is_valid {
             changeset.state = ChangeSetState::ValidationFailed;
-            Self::record_op_failed(db, &changeset_id, &op, op.target_path(), &summary.errors.join("; "));
+            Self::record_op_failed(
+                db,
+                &changeset_id,
+                &op,
+                op.target_path(),
+                &summary.errors.join("; "),
+            );
             return Err(summary.errors.join("\n"));
         }
 
@@ -905,7 +996,12 @@ impl ChangeSetEngine {
             ChangeOperation::Replace { expected_hash, .. } => Some(expected_hash.as_str()),
             _ => None,
         };
-        if let Err(truth_err) = crate::services::truth::WorkspaceTruth::verify_target_fast(project_path, op.target_path(), expected_hash, is_create) {
+        if let Err(truth_err) = crate::services::truth::WorkspaceTruth::verify_target_fast(
+            project_path,
+            op.target_path(),
+            expected_hash,
+            is_create,
+        ) {
             changeset.state = ChangeSetState::ValidationFailed;
             Self::record_op_failed(db, &changeset_id, &op, op.target_path(), &truth_err);
             return Err(truth_err);
@@ -924,18 +1020,51 @@ impl ChangeSetEngine {
 
         // 4. Execute operation
         match op {
-            ChangeOperation::Create { ref path, ref content } => {
-                let clean_path = path.trim().replace('\\', "/").trim_start_matches('/').to_string();
-                match crate::services::filesystem::create_file_strict(project_path, &clean_path, content) {
+            ChangeOperation::Create {
+                ref path,
+                ref content,
+            } => {
+                let clean_path = path
+                    .trim()
+                    .replace('\\', "/")
+                    .trim_start_matches('/')
+                    .to_string();
+                match crate::services::filesystem::create_file_strict(
+                    project_path,
+                    &clean_path,
+                    content,
+                ) {
                     Ok(new_hash) => {
-                        read_tracker.lock().await.insert(clean_path.clone(), new_hash.clone());
-                        journal.record_original(task_id, turn_idx, &clean_path, &new_hash, None, true, Some(db));
+                        read_tracker
+                            .lock()
+                            .await
+                            .insert(clean_path.clone(), new_hash.clone());
+                        journal.record_original(
+                            task_id,
+                            turn_idx,
+                            &clean_path,
+                            &new_hash,
+                            None,
+                            true,
+                            Some(db),
+                        );
                         journal.record_applied_hash(task_id, &clean_path, &new_hash, Some(db));
-                        Self::record_op_applied(db, &changeset_id, &op, &clean_path, None, None, &new_hash);
+                        Self::record_op_applied(
+                            db,
+                            &changeset_id,
+                            &op,
+                            &clean_path,
+                            None,
+                            None,
+                            &new_hash,
+                        );
 
                         Ok(OperationOutcome {
                             success: true,
-                            output_message: format!("File '{}' created successfully (SHA-256: {}).", path, new_hash),
+                            output_message: format!(
+                                "File '{}' created successfully (SHA-256: {}).",
+                                path, new_hash
+                            ),
                             file_diff: Some(crate::events::FileDiff {
                                 path: path.to_string(),
                                 old_content: String::new(),
@@ -950,8 +1079,16 @@ impl ChangeSetEngine {
                     }
                 }
             }
-            ChangeOperation::Modify { ref path, ref expected_hash, ref new_content } => {
-                let clean_path = path.trim().replace('\\', "/").trim_start_matches('/').to_string();
+            ChangeOperation::Modify {
+                ref path,
+                ref expected_hash,
+                ref new_content,
+            } => {
+                let clean_path = path
+                    .trim()
+                    .replace('\\', "/")
+                    .trim_start_matches('/')
+                    .to_string();
                 let effective_expected_hash = if !expected_hash.trim().is_empty() {
                     expected_hash.clone()
                 } else if let Some(h) = read_tracker.lock().await.get(&clean_path).cloned() {
@@ -960,16 +1097,43 @@ impl ChangeSetEngine {
                     return Err(format!("ERROR: READ_REQUIRED_BEFORE_MODIFY: You must call 'read_file' on '{}' before modifying it.", path));
                 };
 
-                match crate::services::filesystem::modify_file_strict(project_path, &clean_path, &effective_expected_hash, new_content) {
+                match crate::services::filesystem::modify_file_strict(
+                    project_path,
+                    &clean_path,
+                    &effective_expected_hash,
+                    new_content,
+                ) {
                     Ok((old_content, new_hash)) => {
-                        read_tracker.lock().await.insert(clean_path.clone(), new_hash.clone());
-                        journal.record_original(task_id, turn_idx, &clean_path, &effective_expected_hash, Some(&old_content), false, Some(db));
+                        read_tracker
+                            .lock()
+                            .await
+                            .insert(clean_path.clone(), new_hash.clone());
+                        journal.record_original(
+                            task_id,
+                            turn_idx,
+                            &clean_path,
+                            &effective_expected_hash,
+                            Some(&old_content),
+                            false,
+                            Some(db),
+                        );
                         journal.record_applied_hash(task_id, &clean_path, &new_hash, Some(db));
-                        Self::record_op_applied(db, &changeset_id, &op, &clean_path, None, Some(&effective_expected_hash), &new_hash);
+                        Self::record_op_applied(
+                            db,
+                            &changeset_id,
+                            &op,
+                            &clean_path,
+                            None,
+                            Some(&effective_expected_hash),
+                            &new_hash,
+                        );
 
                         Ok(OperationOutcome {
                             success: true,
-                            output_message: format!("File '{}' modified successfully (SHA-256: {}).", path, new_hash),
+                            output_message: format!(
+                                "File '{}' modified successfully (SHA-256: {}).",
+                                path, new_hash
+                            ),
                             file_diff: Some(crate::events::FileDiff {
                                 path: path.to_string(),
                                 old_content,
@@ -984,8 +1148,17 @@ impl ChangeSetEngine {
                     }
                 }
             }
-            ChangeOperation::Patch { ref path, ref expected_hash, ref target, ref replacement } => {
-                let clean_path = path.trim().replace('\\', "/").trim_start_matches('/').to_string();
+            ChangeOperation::Patch {
+                ref path,
+                ref expected_hash,
+                ref target,
+                ref replacement,
+            } => {
+                let clean_path = path
+                    .trim()
+                    .replace('\\', "/")
+                    .trim_start_matches('/')
+                    .to_string();
                 let effective_expected_hash = if !expected_hash.trim().is_empty() {
                     expected_hash.clone()
                 } else if let Some(h) = read_tracker.lock().await.get(&clean_path).cloned() {
@@ -994,16 +1167,44 @@ impl ChangeSetEngine {
                     return Err(format!("ERROR: READ_REQUIRED_BEFORE_MODIFY: You must call 'read_file' on '{}' before patching it.", path));
                 };
 
-                match crate::services::filesystem::patch_file_strict(project_path, &clean_path, &effective_expected_hash, target, replacement) {
+                match crate::services::filesystem::patch_file_strict(
+                    project_path,
+                    &clean_path,
+                    &effective_expected_hash,
+                    target,
+                    replacement,
+                ) {
                     Ok((old_content, new_content, new_hash)) => {
-                        read_tracker.lock().await.insert(clean_path.clone(), new_hash.clone());
-                        journal.record_original(task_id, turn_idx, &clean_path, &effective_expected_hash, Some(&old_content), false, Some(db));
+                        read_tracker
+                            .lock()
+                            .await
+                            .insert(clean_path.clone(), new_hash.clone());
+                        journal.record_original(
+                            task_id,
+                            turn_idx,
+                            &clean_path,
+                            &effective_expected_hash,
+                            Some(&old_content),
+                            false,
+                            Some(db),
+                        );
                         journal.record_applied_hash(task_id, &clean_path, &new_hash, Some(db));
-                        Self::record_op_applied(db, &changeset_id, &op, &clean_path, None, Some(&effective_expected_hash), &new_hash);
+                        Self::record_op_applied(
+                            db,
+                            &changeset_id,
+                            &op,
+                            &clean_path,
+                            None,
+                            Some(&effective_expected_hash),
+                            &new_hash,
+                        );
 
                         Ok(OperationOutcome {
                             success: true,
-                            output_message: format!("File '{}' patched successfully (SHA-256: {}).", path, new_hash),
+                            output_message: format!(
+                                "File '{}' patched successfully (SHA-256: {}).",
+                                path, new_hash
+                            ),
                             file_diff: Some(crate::events::FileDiff {
                                 path: path.to_string(),
                                 old_content,
@@ -1018,8 +1219,16 @@ impl ChangeSetEngine {
                     }
                 }
             }
-            ChangeOperation::Replace { ref path, ref expected_hash, ref new_content } => {
-                let clean_path = path.trim().replace('\\', "/").trim_start_matches('/').to_string();
+            ChangeOperation::Replace {
+                ref path,
+                ref expected_hash,
+                ref new_content,
+            } => {
+                let clean_path = path
+                    .trim()
+                    .replace('\\', "/")
+                    .trim_start_matches('/')
+                    .to_string();
                 let effective_expected_hash = if !expected_hash.trim().is_empty() {
                     expected_hash.clone()
                 } else if let Some(h) = read_tracker.lock().await.get(&clean_path).cloned() {
@@ -1028,16 +1237,43 @@ impl ChangeSetEngine {
                     return Err(format!("ERROR: READ_REQUIRED_BEFORE_MODIFY: You must call 'read_file' on '{}' before replacing it.", path));
                 };
 
-                match crate::services::filesystem::replace_file_strict(project_path, &clean_path, &effective_expected_hash, new_content) {
+                match crate::services::filesystem::replace_file_strict(
+                    project_path,
+                    &clean_path,
+                    &effective_expected_hash,
+                    new_content,
+                ) {
                     Ok((old_content, new_hash)) => {
-                        read_tracker.lock().await.insert(clean_path.clone(), new_hash.clone());
-                        journal.record_original(task_id, turn_idx, &clean_path, &effective_expected_hash, Some(&old_content), false, Some(db));
+                        read_tracker
+                            .lock()
+                            .await
+                            .insert(clean_path.clone(), new_hash.clone());
+                        journal.record_original(
+                            task_id,
+                            turn_idx,
+                            &clean_path,
+                            &effective_expected_hash,
+                            Some(&old_content),
+                            false,
+                            Some(db),
+                        );
                         journal.record_applied_hash(task_id, &clean_path, &new_hash, Some(db));
-                        Self::record_op_applied(db, &changeset_id, &op, &clean_path, None, Some(&effective_expected_hash), &new_hash);
+                        Self::record_op_applied(
+                            db,
+                            &changeset_id,
+                            &op,
+                            &clean_path,
+                            None,
+                            Some(&effective_expected_hash),
+                            &new_hash,
+                        );
 
                         Ok(OperationOutcome {
                             success: true,
-                            output_message: format!("File '{}' replaced successfully (SHA-256: {}).", path, new_hash),
+                            output_message: format!(
+                                "File '{}' replaced successfully (SHA-256: {}).",
+                                path, new_hash
+                            ),
                             file_diff: Some(crate::events::FileDiff {
                                 path: path.to_string(),
                                 old_content,
@@ -1053,16 +1289,42 @@ impl ChangeSetEngine {
                 }
             }
             ChangeOperation::Delete { ref path, approved } => {
-                let clean_path = path.trim().replace('\\', "/").trim_start_matches('/').to_string();
-                if let Ok(old_content) = crate::services::filesystem::read_file_str(project_path, &clean_path) {
+                let clean_path = path
+                    .trim()
+                    .replace('\\', "/")
+                    .trim_start_matches('/')
+                    .to_string();
+                if let Ok(old_content) =
+                    crate::services::filesystem::read_file_str(project_path, &clean_path)
+                {
                     let old_hash = crate::services::filesystem::compute_sha256(&old_content);
-                    journal.record_original(task_id, turn_idx, &clean_path, &old_hash, Some(&old_content), false, Some(db));
+                    journal.record_original(
+                        task_id,
+                        turn_idx,
+                        &clean_path,
+                        &old_hash,
+                        Some(&old_content),
+                        false,
+                        Some(db),
+                    );
                 }
 
-                match crate::services::filesystem::delete_file_strict(project_path, &clean_path, approved) {
+                match crate::services::filesystem::delete_file_strict(
+                    project_path,
+                    &clean_path,
+                    approved,
+                ) {
                     Ok(_) => {
                         read_tracker.lock().await.remove(&clean_path);
-                        Self::record_op_applied(db, &changeset_id, &op, &clean_path, None, None, "");
+                        Self::record_op_applied(
+                            db,
+                            &changeset_id,
+                            &op,
+                            &clean_path,
+                            None,
+                            None,
+                            "",
+                        );
                         Ok(OperationOutcome {
                             success: true,
                             output_message: format!("Deleted '{}' successfully.", path),
@@ -1076,21 +1338,48 @@ impl ChangeSetEngine {
                     }
                 }
             }
-            ChangeOperation::Move { ref source, ref destination } => {
-                let dest_before = crate::services::filesystem::read_file_str(project_path, destination).ok();
-                match crate::services::filesystem::move_file_strict(project_path, source, destination) {
+            ChangeOperation::Move {
+                ref source,
+                ref destination,
+            } => {
+                let dest_before =
+                    crate::services::filesystem::read_file_str(project_path, destination).ok();
+                match crate::services::filesystem::move_file_strict(
+                    project_path,
+                    source,
+                    destination,
+                ) {
                     Ok(_) => {
                         let mut guard = read_tracker.lock().await;
                         let hash = guard.remove(source).unwrap_or_default();
                         if !hash.is_empty() {
                             guard.insert(destination.to_string(), hash.clone());
                         }
-                        journal.record_move(task_id, turn_idx, source, destination, &hash, dest_before.as_deref(), Some(db));
-                        Self::record_op_applied(db, &changeset_id, &op, destination, Some(source), Some(&hash), &hash);
+                        journal.record_move(
+                            task_id,
+                            turn_idx,
+                            source,
+                            destination,
+                            &hash,
+                            dest_before.as_deref(),
+                            Some(db),
+                        );
+                        Self::record_op_applied(
+                            db,
+                            &changeset_id,
+                            &op,
+                            destination,
+                            Some(source),
+                            Some(&hash),
+                            &hash,
+                        );
 
                         Ok(OperationOutcome {
                             success: true,
-                            output_message: format!("Moved '{}' -> '{}' successfully.", source, destination),
+                            output_message: format!(
+                                "Moved '{}' -> '{}' successfully.",
+                                source, destination
+                            ),
                             file_diff: None,
                             new_hash: if hash.is_empty() { None } else { Some(hash) },
                         })
@@ -1101,17 +1390,46 @@ impl ChangeSetEngine {
                     }
                 }
             }
-            ChangeOperation::Copy { ref source, ref destination } => {
-                match crate::services::filesystem::copy_file_strict(project_path, source, destination) {
+            ChangeOperation::Copy {
+                ref source,
+                ref destination,
+            } => {
+                match crate::services::filesystem::copy_file_strict(
+                    project_path,
+                    source,
+                    destination,
+                ) {
                     Ok(dest_hash) => {
-                        read_tracker.lock().await.insert(destination.to_string(), dest_hash.clone());
-                        journal.record_original(task_id, turn_idx, destination, &dest_hash, None, true, Some(db));
+                        read_tracker
+                            .lock()
+                            .await
+                            .insert(destination.to_string(), dest_hash.clone());
+                        journal.record_original(
+                            task_id,
+                            turn_idx,
+                            destination,
+                            &dest_hash,
+                            None,
+                            true,
+                            Some(db),
+                        );
                         journal.record_applied_hash(task_id, destination, &dest_hash, Some(db));
-                        Self::record_op_applied(db, &changeset_id, &op, destination, Some(source), None, &dest_hash);
+                        Self::record_op_applied(
+                            db,
+                            &changeset_id,
+                            &op,
+                            destination,
+                            Some(source),
+                            None,
+                            &dest_hash,
+                        );
 
                         Ok(OperationOutcome {
                             success: true,
-                            output_message: format!("Copied '{}' -> '{}' successfully (SHA-256: {}).", source, destination, dest_hash),
+                            output_message: format!(
+                                "Copied '{}' -> '{}' successfully (SHA-256: {}).",
+                                source, destination, dest_hash
+                            ),
                             file_diff: None,
                             new_hash: Some(dest_hash),
                         })
@@ -1123,10 +1441,22 @@ impl ChangeSetEngine {
                 }
             }
             ChangeOperation::CreateDirectory { ref path } => {
-                let clean_path = path.trim().replace('\\', "/").trim_start_matches('/').to_string();
+                let clean_path = path
+                    .trim()
+                    .replace('\\', "/")
+                    .trim_start_matches('/')
+                    .to_string();
                 match crate::services::filesystem::create_dir_strict(project_path, &clean_path) {
                     Ok(_) => {
-                        Self::record_op_applied(db, &changeset_id, &op, &clean_path, None, None, "");
+                        Self::record_op_applied(
+                            db,
+                            &changeset_id,
+                            &op,
+                            &clean_path,
+                            None,
+                            None,
+                            "",
+                        );
                         Ok(OperationOutcome {
                             success: true,
                             output_message: format!("Created directory '{}' successfully.", path),
@@ -1140,14 +1470,12 @@ impl ChangeSetEngine {
                     }
                 }
             }
-            ChangeOperation::NoOp { ref reason } => {
-                Ok(OperationOutcome {
-                    success: true,
-                    output_message: format!("NoOp: {}", reason),
-                    file_diff: None,
-                    new_hash: None,
-                })
-            }
+            ChangeOperation::NoOp { ref reason } => Ok(OperationOutcome {
+                success: true,
+                output_message: format!("NoOp: {}", reason),
+                file_diff: None,
+                new_hash: None,
+            }),
         }
     }
 
@@ -1161,15 +1489,17 @@ impl ChangeSetEngine {
         let now = chrono::Utc::now().to_rfc3339();
         let changeset_id = format!("cs_{task_id}");
         let state_str = format!("{:?}", final_state);
-        let applied_at = if final_state == ChangeSetState::Applied || final_state == ChangeSetState::Verified {
-            Some(now.clone())
-        } else {
-            None
-        };
+        let applied_at =
+            if final_state == ChangeSetState::Applied || final_state == ChangeSetState::Verified {
+                Some(now.clone())
+            } else {
+                None
+            };
         conn.execute(
             "UPDATE changesets SET state = ?1, applied_at = ?2 WHERE id = ?3",
             rusqlite::params![state_str, applied_at, changeset_id],
-        ).map_err(|e| format!("DB error updating changeset state: {e}"))?;
+        )
+        .map_err(|e| format!("DB error updating changeset state: {e}"))?;
         Ok(())
     }
 
@@ -1183,7 +1513,11 @@ impl ChangeSetEngine {
         after_hash: &str,
     ) {
         if let Ok(conn) = db.lock() {
-            let op_id = format!("{}_{}", changeset_id, chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+            let op_id = format!(
+                "{}_{}",
+                changeset_id,
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+            );
             let _ = conn.execute(
                 "INSERT OR REPLACE INTO changeset_operations (
                     id, changeset_id, sequence, operation, path, source_path, destination_path,
@@ -1195,7 +1529,11 @@ impl ChangeSetEngine {
                     op.op_type(),
                     path,
                     source_path,
-                    if op.op_type() == "MOVE" || op.op_type() == "COPY" { Some(path) } else { None },
+                    if op.op_type() == "MOVE" || op.op_type() == "COPY" {
+                        Some(path)
+                    } else {
+                        None
+                    },
                     before_hash,
                     before_hash,
                     after_hash,
@@ -1212,18 +1550,17 @@ impl ChangeSetEngine {
         _error: &str,
     ) {
         if let Ok(conn) = db.lock() {
-            let op_id = format!("{}_{}", changeset_id, chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+            let op_id = format!(
+                "{}_{}",
+                changeset_id,
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+            );
             let _ = conn.execute(
                 "INSERT OR REPLACE INTO changeset_operations (
                     id, changeset_id, sequence, operation, path, source_path, destination_path,
                     expected_hash, before_hash, after_hash, status
                 ) VALUES (?1, ?2, 0, ?3, ?4, NULL, NULL, NULL, NULL, NULL, 'failed')",
-                rusqlite::params![
-                    op_id,
-                    changeset_id,
-                    op.op_type(),
-                    path,
-                ],
+                rusqlite::params![op_id, changeset_id, op.op_type(), path,],
             );
         }
     }
@@ -1244,8 +1581,16 @@ mod tests {
             file_count: 25,
             directory_count: 5,
             entry_points: vec!["src/main.tsx".to_string(), "src/App.tsx".to_string()],
-            important_files: vec!["package.json".to_string(), "vite.config.ts".to_string(), "tsconfig.json".to_string()],
-            existing_files: vec!["src/main.tsx".to_string(), "src/App.tsx".to_string(), "src/components/Button.tsx".to_string()],
+            important_files: vec![
+                "package.json".to_string(),
+                "vite.config.ts".to_string(),
+                "tsconfig.json".to_string(),
+            ],
+            existing_files: vec![
+                "src/main.tsx".to_string(),
+                "src/App.tsx".to_string(),
+                "src/components/Button.tsx".to_string(),
+            ],
             is_git: true,
             summary: "Mock project state".to_string(),
         }
@@ -1254,10 +1599,22 @@ mod tests {
     #[test]
     fn test_suspicious_recreation_flagged() {
         let state = make_mock_project_state();
-        assert!(ProjectDetector::is_suspicious_recreation(&state, "package.json"));
-        assert!(ProjectDetector::is_suspicious_recreation(&state, "vite.config.ts"));
-        assert!(ProjectDetector::is_suspicious_recreation(&state, "sub-app/package.json"));
-        assert!(!ProjectDetector::is_suspicious_recreation(&state, "src/components/Button.tsx"));
+        assert!(ProjectDetector::is_suspicious_recreation(
+            &state,
+            "package.json"
+        ));
+        assert!(ProjectDetector::is_suspicious_recreation(
+            &state,
+            "vite.config.ts"
+        ));
+        assert!(ProjectDetector::is_suspicious_recreation(
+            &state,
+            "sub-app/package.json"
+        ));
+        assert!(!ProjectDetector::is_suspicious_recreation(
+            &state,
+            "src/components/Button.tsx"
+        ));
     }
 
     #[test]
@@ -1270,19 +1627,20 @@ mod tests {
             workspace_root: "C:/fake/project".to_string(),
             mode: TaskMode::ModifyExistingProject,
             reason: "Add a button".to_string(),
-            operations: vec![
-                ChangeOperation::Create {
-                    path: "package.json".to_string(),
-                    content: "{}".to_string(),
-                },
-            ],
+            operations: vec![ChangeOperation::Create {
+                path: "package.json".to_string(),
+                content: "{}".to_string(),
+            }],
             state: ChangeSetState::Planned,
             created_at: 0,
         };
 
         let summary = ChangeSetValidator::validate(&state, &changeset);
         assert!(!summary.is_valid);
-        assert!(summary.errors.iter().any(|e| e.contains("PROJECT_RECREATION_DETECTED")));
+        assert!(summary
+            .errors
+            .iter()
+            .any(|e| e.contains("PROJECT_RECREATION_DETECTED")));
     }
 
     #[test]
@@ -1295,19 +1653,20 @@ mod tests {
             workspace_root: "C:/fake/project".to_string(),
             mode: TaskMode::ModifyExistingProject,
             reason: "Delete file".to_string(),
-            operations: vec![
-                ChangeOperation::Delete {
-                    path: "src/utils.ts".to_string(),
-                    approved: false,
-                },
-            ],
+            operations: vec![ChangeOperation::Delete {
+                path: "src/utils.ts".to_string(),
+                approved: false,
+            }],
             state: ChangeSetState::Planned,
             created_at: 0,
         };
 
         let summary = ChangeSetValidator::validate(&state, &changeset);
         assert!(!summary.is_valid);
-        assert!(summary.errors.iter().any(|e| e.contains("PERMISSION_DENIED")));
+        assert!(summary
+            .errors
+            .iter()
+            .any(|e| e.contains("PERMISSION_DENIED")));
     }
 
     #[test]
@@ -1320,13 +1679,11 @@ mod tests {
             workspace_root: "C:/fake/project".to_string(),
             mode: TaskMode::ModifyExistingProject,
             reason: "Update App component".to_string(),
-            operations: vec![
-                ChangeOperation::Modify {
-                    path: "src/App.tsx".to_string(),
-                    expected_hash: "a1b2c3d4e5f6".to_string(),
-                    new_content: "export function App() { return <div>Hello</div>; }".to_string(),
-                },
-            ],
+            operations: vec![ChangeOperation::Modify {
+                path: "src/App.tsx".to_string(),
+                expected_hash: "a1b2c3d4e5f6".to_string(),
+                new_content: "export function App() { return <div>Hello</div>; }".to_string(),
+            }],
             state: ChangeSetState::Planned,
             created_at: 0,
         };
@@ -1339,7 +1696,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_changeset_engine_validation_blocks_disk_mutation() {
-        let temp_dir = std::env::temp_dir().join(format!("forge_engine_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("forge_engine_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let project_path = temp_dir.to_str().unwrap();
 
@@ -1364,7 +1722,8 @@ mod tests {
             &db,
             &read_tracker,
             op,
-        ).await;
+        )
+        .await;
 
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("PROJECT_RECREATION_DETECTED"));
@@ -1377,7 +1736,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_changeset_engine_successful_create_and_modify() {
-        let temp_dir = std::env::temp_dir().join(format!("forge_engine_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("forge_engine_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let project_path = temp_dir.to_str().unwrap();
 
@@ -1402,7 +1762,8 @@ mod tests {
             &db,
             &read_tracker,
             op1,
-        ).await;
+        )
+        .await;
 
         assert!(res1.is_ok());
         let outcome1 = res1.unwrap();
@@ -1425,11 +1786,16 @@ mod tests {
             &db,
             &read_tracker,
             op2,
-        ).await;
+        )
+        .await;
 
         assert!(res2.is_ok());
-        let content_on_disk = std::fs::read_to_string(temp_dir.join("src/components/Card.tsx")).unwrap();
-        assert_eq!(content_on_disk, "export const Card = () => <section>Card Content</section>;");
+        let content_on_disk =
+            std::fs::read_to_string(temp_dir.join("src/components/Card.tsx")).unwrap();
+        assert_eq!(
+            content_on_disk,
+            "export const Card = () => <section>Card Content</section>;"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1451,7 +1817,15 @@ mod tests {
         let ai_hash = crate::services::filesystem::compute_sha256(ai_content);
 
         let journal = RollbackJournal::new();
-        journal.record_original("task-123", 1, "index.ts", &initial_hash, Some("initial content"), false, None);
+        journal.record_original(
+            "task-123",
+            1,
+            "index.ts",
+            &initial_hash,
+            Some("initial content"),
+            false,
+            None,
+        );
         journal.record_applied_hash("task-123", "index.ts", &ai_hash, None);
 
         // 3. User manually modifies file after AI task
@@ -1487,7 +1861,15 @@ mod tests {
         let ai_hash = crate::services::filesystem::compute_sha256(ai_content);
 
         let journal = RollbackJournal::new();
-        journal.record_original("task-124", 1, "index.ts", &initial_hash, Some("initial content"), false, None);
+        journal.record_original(
+            "task-124",
+            1,
+            "index.ts",
+            &initial_hash,
+            Some("initial content"),
+            false,
+            None,
+        );
         journal.record_applied_hash("task-124", "index.ts", &ai_hash, None);
 
         // 3. Trigger rollback without user changes
@@ -1540,14 +1922,30 @@ mod tests {
         let t1_path = temp_dir.join("Turn1_file.ts");
         std::fs::write(&t1_path, "Turn 1 Content").unwrap();
         let t1_hash = crate::services::filesystem::compute_sha256("Turn 1 Content");
-        journal.record_original("task-turn-1", 1, "Turn1_file.ts", &t1_hash, None, true, Some(&db));
+        journal.record_original(
+            "task-turn-1",
+            1,
+            "Turn1_file.ts",
+            &t1_hash,
+            None,
+            true,
+            Some(&db),
+        );
         journal.record_applied_hash("task-turn-1", "Turn1_file.ts", &t1_hash, Some(&db));
 
         // Turn 2: Create Turn2_file.ts
         let t2_path = temp_dir.join("Turn2_file.ts");
         std::fs::write(&t2_path, "Turn 2 Content").unwrap();
         let t2_hash = crate::services::filesystem::compute_sha256("Turn 2 Content");
-        journal.record_original("task-turn-1", 2, "Turn2_file.ts", &t2_hash, None, true, Some(&db));
+        journal.record_original(
+            "task-turn-1",
+            2,
+            "Turn2_file.ts",
+            &t2_hash,
+            None,
+            true,
+            Some(&db),
+        );
         journal.record_applied_hash("task-turn-1", "Turn2_file.ts", &t2_hash, Some(&db));
 
         // Execute rollback only for Turn 2
@@ -1587,14 +1985,23 @@ mod tests {
         let ai_hash = crate::services::filesystem::compute_sha256(ai_content);
 
         let journal = RollbackJournal::new();
-        journal.record_original("task-durable-1", 1, "config.json", &orig_hash, Some("{\"env\": \"prod\"}"), false, Some(&db));
+        journal.record_original(
+            "task-durable-1",
+            1,
+            "config.json",
+            &orig_hash,
+            Some("{\"env\": \"prod\"}"),
+            false,
+            Some(&db),
+        );
         journal.record_applied_hash("task-durable-1", "config.json", &ai_hash, Some(&db));
 
         // 3. Simulate process crash / restart: Create a BRAND NEW empty RollbackJournal instance
         let crashed_restart_journal = RollbackJournal::new();
 
         // 4. Trigger durable rollback (in-memory is empty, MUST load from SQLite table rollback_journal_entries!)
-        let result = crashed_restart_journal.rollback_task(project_path, "task-durable-1", Some(&db));
+        let result =
+            crashed_restart_journal.rollback_task(project_path, "task-durable-1", Some(&db));
         assert!(result.is_ok());
 
         // File is restored to original content from SQLite records!
@@ -1636,7 +2043,10 @@ mod tests {
 
         // Entire batch MUST be invalid before any execution
         assert!(!summary.is_valid);
-        assert!(summary.errors.iter().any(|e| e.contains("PROJECT_RECREATION_DETECTED")));
+        assert!(summary
+            .errors
+            .iter()
+            .any(|e| e.contains("PROJECT_RECREATION_DETECTED")));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1663,7 +2073,10 @@ mod tests {
         assert!(result.unwrap_err().contains("ROLLBACK_CONFLICT"));
 
         // User edits on dest.ts remain intact
-        assert_eq!(std::fs::read_to_string(&dest_file).unwrap(), "user modified moved content");
+        assert_eq!(
+            std::fs::read_to_string(&dest_file).unwrap(),
+            "user modified moved content"
+        );
         assert!(!temp_dir.join("src.ts").exists());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1692,8 +2105,14 @@ mod tests {
         assert!(result.unwrap_err().contains("ROLLBACK_CONFLICT"));
 
         // Both files remain intact
-        assert_eq!(std::fs::read_to_string(&src_file).unwrap(), "newly created src");
-        assert_eq!(std::fs::read_to_string(&dest_file).unwrap(), "moved content");
+        assert_eq!(
+            std::fs::read_to_string(&src_file).unwrap(),
+            "newly created src"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&dest_file).unwrap(),
+            "moved content"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1705,7 +2124,11 @@ mod tests {
         let project_path = temp_dir.to_str().unwrap();
 
         // Existing AuthProvider.tsx
-        std::fs::write(temp_dir.join("src/context/AuthProvider.tsx"), "export const AuthProvider = () => {};").unwrap();
+        std::fs::write(
+            temp_dir.join("src/context/AuthProvider.tsx"),
+            "export const AuthProvider = () => {};",
+        )
+        .unwrap();
         let state = crate::services::project_state::ProjectDetector::detect(project_path);
 
         // Propose creating AuthenticationProvider.tsx
@@ -1725,7 +2148,10 @@ mod tests {
         };
 
         let summary = ChangeSetValidator::validate(&state, &changeset);
-        assert!(summary.warnings.iter().any(|w| w.contains("SEMANTIC_DUPLICATION_WARNING")));
+        assert!(summary
+            .warnings
+            .iter()
+            .any(|w| w.contains("SEMANTIC_DUPLICATION_WARNING")));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1740,7 +2166,8 @@ mod tests {
         std::fs::write(
             temp_dir.join("src/services/UserSessionManager.ts"),
             "export class UserSessionManager { getSession() {} login() {} }",
-        ).unwrap();
+        )
+        .unwrap();
         let state = crate::services::project_state::ProjectDetector::detect(project_path);
 
         // AI proposes creating src/auth/SessionController.ts
@@ -1754,14 +2181,21 @@ mod tests {
             state: ChangeSetState::Validating,
             operations: vec![ChangeOperation::Create {
                 path: "src/auth/SessionController.ts".to_string(),
-                content: "export class SessionController { getSession() {} login() {} }".to_string(),
+                content: "export class SessionController { getSession() {} login() {} }"
+                    .to_string(),
             }],
             created_at: 0,
         };
 
         let summary = ChangeSetValidator::validate(&state, &changeset);
-        assert!(summary.warnings.iter().any(|w| w.contains("SEMANTIC_DUPLICATION_WARNING")));
-        assert!(summary.warnings.iter().any(|w| w.contains("UserSessionManager.ts")));
+        assert!(summary
+            .warnings
+            .iter()
+            .any(|w| w.contains("SEMANTIC_DUPLICATION_WARNING")));
+        assert!(summary
+            .warnings
+            .iter()
+            .any(|w| w.contains("UserSessionManager.ts")));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1806,6 +2240,9 @@ mod tests {
 
         let summary = ChangeSetValidator::validate(&state, &changeset);
         assert!(!summary.is_valid);
-        assert!(summary.errors.iter().any(|e| e.contains("DUPLICATE_CREATE_OPERATION")));
+        assert!(summary
+            .errors
+            .iter()
+            .any(|e| e.contains("DUPLICATE_CREATE_OPERATION")));
     }
 }

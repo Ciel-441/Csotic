@@ -1,14 +1,14 @@
-use crate::tools::classify_risk;
 use crate::ipc::types::RiskLevel;
+use crate::tools::classify_risk;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
-use tokio::process::Command;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::task::JoinHandle;
 use tauri::{AppHandle, Emitter};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 /// Handle to the command currently running in the interactive terminal,
 /// including child PID for cancellation and stdin for interactive input.
@@ -23,16 +23,34 @@ const COMMAND_TIMEOUT_SECS: u64 = 60;
 const MAX_OUTPUT_BYTES: usize = 512 * 1024; // 512KB cap to prevent unbounded RAM growth
 const TRUNCATED_NOTE: &str = "[Output truncated at 512KB]\n";
 
-pub async fn handle(app: &AppHandle, action: &str, payload: &serde_json::Value, process_handle: &ProcessHandle) -> Result<serde_json::Value, String> {
+pub async fn handle(
+    app: &AppHandle,
+    action: &str,
+    payload: &serde_json::Value,
+    process_handle: &ProcessHandle,
+) -> Result<serde_json::Value, String> {
     match action {
         "execute_command" => {
-            let project_path = payload.get("project_path").and_then(|v| v.as_str())
+            let project_path = payload
+                .get("project_path")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'project_path'")?;
-            let command = payload.get("command").and_then(|v| v.as_str())
+            let command = payload
+                .get("command")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing 'command'")?;
-            let approved = payload.get("approved").and_then(|v| v.as_bool()).unwrap_or(false);
-            let sandboxed = payload.get("sandboxed").and_then(|v| v.as_bool()).unwrap_or(false);
-            let stream = payload.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+            let approved = payload
+                .get("approved")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let sandboxed = payload
+                .get("sandboxed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let stream = payload
+                .get("stream")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             let risk = classify_risk(command);
             match risk {
@@ -41,20 +59,23 @@ pub async fn handle(app: &AppHandle, action: &str, payload: &serde_json::Value, 
                         return Err(format!("Permission denied: '{}' is classified as Critical risk. Re-call with approved: true to proceed.", command));
                     }
                 }
-                RiskLevel::High
-                    if !approved => {
-                        return Err(format!("Permission denied: '{}' is classified as High risk. Re-call with approved: true to proceed.", command));
-                    }
+                RiskLevel::High if !approved => {
+                    return Err(format!("Permission denied: '{}' is classified as High risk. Re-call with approved: true to proceed.", command));
+                }
                 _ => {}
             }
 
             if sandboxed {
-                let _ = app.emit("terminal-output", serde_json::json!({ "text": format!("❯ [sandboxed] {}", command) }));
+                let _ = app.emit(
+                    "terminal-output",
+                    serde_json::json!({ "text": format!("❯ [sandboxed] {}", command) }),
+                );
                 match crate::services::sandbox::run_in_sandbox(command, project_path) {
                     Ok(out) => {
                         for line in out.lines() {
                             crate::services::runtime::ingest_log(line);
-                            let _ = app.emit("terminal-output", serde_json::json!({ "text": line }));
+                            let _ =
+                                app.emit("terminal-output", serde_json::json!({ "text": line }));
                         }
                         return Ok(serde_json::json!({
                             "stdout": out.clone(),
@@ -83,8 +104,14 @@ pub async fn handle(app: &AppHandle, action: &str, payload: &serde_json::Value, 
                     bytes.extend_from_slice(b"\r\n");
                     #[cfg(not(windows))]
                     bytes.push(b'\n');
-                    stdin.write_all(&bytes).await.map_err(|e| format!("Failed to write to stdin: {e}"))?;
-                    stdin.flush().await.map_err(|e| format!("Failed to flush stdin: {e}"))?;
+                    stdin
+                        .write_all(&bytes)
+                        .await
+                        .map_err(|e| format!("Failed to write to stdin: {e}"))?;
+                    stdin
+                        .flush()
+                        .await
+                        .map_err(|e| format!("Failed to flush stdin: {e}"))?;
                     return Ok(serde_json::json!({ "sent": true }));
                 }
             }
@@ -148,7 +175,11 @@ async fn kill_tree(pid: u32) {
         c.args(["-TERM", "--", &format!("-{pid}")]);
         c
     };
-    let _ = killer.stdout(Stdio::null()).stderr(Stdio::null()).status().await;
+    let _ = killer
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
 }
 
 /// Reads a pipe in chunks until EOF, streaming each line or unbuffered prompt cleanly in real time.
@@ -171,7 +202,8 @@ async fn read_stream<R: AsyncRead + Unpin>(mut stream: R, app: Option<AppHandle>
                     let prompt = decoded.trim_end_matches(['\r', '\n']);
                     if !prompt.is_empty() {
                         if let Some(ref app_handle) = app {
-                            let _ = app_handle.emit("terminal-output", serde_json::json!({ "text": prompt }));
+                            let _ = app_handle
+                                .emit("terminal-output", serde_json::json!({ "text": prompt }));
                         }
                     }
                     if out.len() + prompt.len() < MAX_OUTPUT_BYTES {
@@ -230,7 +262,8 @@ async fn read_stream<R: AsyncRead + Unpin>(mut stream: R, app: Option<AppHandle>
 /// Waits briefly for a reader task. A detached grandchild can hold the pipe open after the
 /// command itself exited; don't hang the caller on it.
 async fn drain(task: JoinHandle<String>) -> String {
-    tokio::time::timeout(Duration::from_secs(2), task).await
+    tokio::time::timeout(Duration::from_secs(2), task)
+        .await
         .ok()
         .and_then(Result::ok)
         .unwrap_or_default()
@@ -239,7 +272,13 @@ async fn drain(task: JoinHandle<String>) -> String {
 /// Runs a shell command. `stream = true` is the interactive terminal: output is streamed as
 /// `terminal-output` events, stdin is piped for interactive input, and the PID is registered for `cancel_command`.
 /// `stream = false` is a silent probe (version checks etc.) with a 60s timeout.
-pub async fn execute_command(app: &AppHandle, project_path: &str, command: &str, stream: bool, process_handle: &ProcessHandle) -> Result<serde_json::Value, String> {
+pub async fn execute_command(
+    app: &AppHandle,
+    project_path: &str,
+    command: &str,
+    stream: bool,
+    process_handle: &ProcessHandle,
+) -> Result<serde_json::Value, String> {
     let target_dir = if project_path.is_empty() || project_path == "." {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     } else {
@@ -254,7 +293,9 @@ pub async fn execute_command(app: &AppHandle, project_path: &str, command: &str,
         let temp_dir = std::env::temp_dir();
         let h_path = temp_dir.join("csotic_unbuffer.h");
         if !h_path.exists() {
-            let _ = std::fs::write(&h_path, r#"#include <stdio.h>
+            let _ = std::fs::write(
+                &h_path,
+                r#"#include <stdio.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -265,7 +306,8 @@ __attribute__((constructor)) static void __csotic_unbuffer(void) {
 #ifdef __cplusplus
 }
 #endif
-"#);
+"#,
+            );
         }
         h_path.to_string_lossy().replace('\\', "/")
     };
@@ -273,10 +315,14 @@ __attribute__((constructor)) static void __csotic_unbuffer(void) {
     let effective_command = if stream {
         let flag = format!(" -include \"{}\" ", unbuffer_header);
         let compilers = [
-            "gcc.exe", "gcc",
-            "g++.exe", "g++",
-            "clang.exe", "clang",
-            "clang++.exe", "clang++",
+            "gcc.exe",
+            "gcc",
+            "g++.exe",
+            "g++",
+            "clang.exe",
+            "clang",
+            "clang++.exe",
+            "clang++",
         ];
         let mut modified = None;
         for comp in compilers {
@@ -299,7 +345,8 @@ __attribute__((constructor)) static void __csotic_unbuffer(void) {
     };
 
     let start_time = std::time::Instant::now();
-    let mut child = shell_command(&effective_command, &target_dir, stream).spawn()
+    let mut child = shell_command(&effective_command, &target_dir, stream)
+        .spawn()
         .map_err(|e| format!("Failed to spawn command: {e}"))?;
     let pid = child.id();
     let child_stdin = if stream { child.stdin.take() } else { None };
@@ -314,8 +361,14 @@ __attribute__((constructor)) static void __csotic_unbuffer(void) {
     }
 
     let emit_to = stream.then(|| app.clone());
-    let stdout_task = tokio::spawn(read_stream(child.stdout.take().ok_or("Failed to open stdout")?, emit_to.clone()));
-    let stderr_task = tokio::spawn(read_stream(child.stderr.take().ok_or("Failed to open stderr")?, emit_to));
+    let stdout_task = tokio::spawn(read_stream(
+        child.stdout.take().ok_or("Failed to open stdout")?,
+        emit_to.clone(),
+    ));
+    let stderr_task = tokio::spawn(read_stream(
+        child.stderr.take().ok_or("Failed to open stderr")?,
+        emit_to,
+    ));
 
     let mut timed_out = false;
     let status = if stream {
@@ -331,7 +384,8 @@ __attribute__((constructor)) static void __csotic_unbuffer(void) {
                 child.wait().await
             }
         }
-    }.map_err(|e| format!("Wait error: {e}"))?;
+    }
+    .map_err(|e| format!("Wait error: {e}"))?;
 
     // cancel_command takes the process out of the handle before killing, so a missing or mismatched PID means Stop.
     let cancelled = stream && {
@@ -366,7 +420,10 @@ __attribute__((constructor)) static void __csotic_unbuffer(void) {
         let text = if exit_code == 0 {
             format!("✨ [Finished in {}]", duration_str)
         } else {
-            format!("⚠️ [Process exited with code {} in {}]", exit_code, duration_str)
+            format!(
+                "⚠️ [Process exited with code {} in {}]",
+                exit_code, duration_str
+            )
         };
         let _ = app.emit("terminal-output", serde_json::json!({ "text": text }));
     }
@@ -382,7 +439,12 @@ __attribute__((constructor)) static void __csotic_unbuffer(void) {
 }
 
 /// For agent tool use — run command and return simple text result
-pub async fn run_command_simple(project_path: &str, command: &str, _permission: &str, _process_handle: &ProcessHandle) -> Result<String, String> {
+pub async fn run_command_simple(
+    project_path: &str,
+    command: &str,
+    _permission: &str,
+    _process_handle: &ProcessHandle,
+) -> Result<String, String> {
     let risk = classify_risk(command);
     match risk {
         RiskLevel::Critical | RiskLevel::High => {
@@ -391,29 +453,39 @@ pub async fn run_command_simple(project_path: &str, command: &str, _permission: 
         _ => {}
     }
 
-    let mut child = shell_command(command, Path::new(project_path), false).spawn()
+    let mut child = shell_command(command, Path::new(project_path), false)
+        .spawn()
         .map_err(|e| format!("Failed to spawn command: {e}"))?;
     let pid = child.id();
 
-    let stdout_task = tokio::spawn(read_stream(child.stdout.take().ok_or("Failed to open stdout")?, None));
-    let stderr_task = tokio::spawn(read_stream(child.stderr.take().ok_or("Failed to open stderr")?, None));
+    let stdout_task = tokio::spawn(read_stream(
+        child.stdout.take().ok_or("Failed to open stdout")?,
+        None,
+    ));
+    let stderr_task = tokio::spawn(read_stream(
+        child.stderr.take().ok_or("Failed to open stderr")?,
+        None,
+    ));
 
-    let status = match tokio::time::timeout(Duration::from_secs(COMMAND_TIMEOUT_SECS), child.wait()).await {
-        Ok(status) => status.map_err(|e| format!("Wait error: {e}"))?,
-        Err(_) => {
-            if let Some(pid) = pid {
-                kill_tree(pid).await;
+    let status =
+        match tokio::time::timeout(Duration::from_secs(COMMAND_TIMEOUT_SECS), child.wait()).await {
+            Ok(status) => status.map_err(|e| format!("Wait error: {e}"))?,
+            Err(_) => {
+                if let Some(pid) = pid {
+                    kill_tree(pid).await;
+                }
+                let _ = child.wait().await;
+                return Err("Command timed out after 60 seconds".to_string());
             }
-            let _ = child.wait().await;
-            return Err("Command timed out after 60 seconds".to_string());
-        }
-    };
+        };
 
     let stdout = drain(stdout_task).await;
     let stderr = drain(stderr_task).await;
     let exit_code = status.code().unwrap_or(-1);
     // Always return Ok so the agent model can read the output and act on errors
-    Ok(format!("Exit code: {exit_code}\nstdout:\n{stdout}\nstderr:\n{stderr}"))
+    Ok(format!(
+        "Exit code: {exit_code}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    ))
 }
 
 #[cfg(test)]
@@ -423,11 +495,15 @@ mod tests {
     #[tokio::test]
     async fn quoted_args_reach_the_command_and_exit_code_is_reported() {
         let handle: ProcessHandle = Arc::new(Mutex::new(None));
-        let out = run_command_simple(".", "echo \"a b\"", "", &handle).await.expect("echo runs");
+        let out = run_command_simple(".", "echo \"a b\"", "", &handle)
+            .await
+            .expect("echo runs");
         assert!(out.contains("a b"), "{out}");
         assert!(!out.contains("\\\""), "quotes were mangled: {out}");
 
-        let out = run_command_simple(".", "exit 3", "", &handle).await.expect("exit runs");
+        let out = run_command_simple(".", "exit 3", "", &handle)
+            .await
+            .expect("exit runs");
         assert!(out.starts_with("Exit code: 3"), "{out}");
     }
 }

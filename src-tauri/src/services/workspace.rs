@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
 use rusqlite::Connection;
-use std::sync::Mutex;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceState {
@@ -67,7 +67,7 @@ fn load_workspace_or_default(conn: &Connection) -> WorkspaceState {
         Err(_) => return WorkspaceState::default(),
     };
     let state_json: Option<String> = stmt.query_row([], |row| row.get(0)).ok();
-    
+
     if let Some(json_str) = state_json {
         if let Ok(state) = serde_json::from_str::<WorkspaceState>(&json_str) {
             return state;
@@ -86,9 +86,13 @@ fn save_workspace_state(conn: &Connection, state: &WorkspaceState) -> Result<(),
     Ok(())
 }
 
-pub fn handle(action: &str, payload: &serde_json::Value, db: &Mutex<Connection>) -> Result<serde_json::Value, String> {
+pub fn handle(
+    action: &str,
+    payload: &serde_json::Value,
+    db: &Mutex<Connection>,
+) -> Result<serde_json::Value, String> {
     let conn = db.lock().map_err(|e| format!("DB lock error: {e}"))?;
-    
+
     match action {
         "get_state" => {
             let state = load_workspace_or_default(&conn);
@@ -108,7 +112,8 @@ pub fn handle(action: &str, payload: &serde_json::Value, db: &Mutex<Connection>)
                 path
             };
 
-            let canonical_path = Path::new(clean_raw).canonicalize()
+            let canonical_path = Path::new(clean_raw)
+                .canonicalize()
                 .map_err(|_| format!("Path does not exist: {path}"))?;
             if !canonical_path.is_dir() {
                 return Err(format!("Project path must be a directory: {path}"));
@@ -139,7 +144,11 @@ pub fn handle(action: &str, payload: &serde_json::Value, db: &Mutex<Connection>)
             let pstate = crate::services::project_state::ProjectDetector::detect(&clean_canonical);
             let project_id = crate::services::filesystem::compute_project_id(&clean_canonical);
             let now = chrono::Utc::now().to_rfc3339();
-            let git_root = if pstate.is_git { Some(clean_canonical.clone()) } else { None };
+            let git_root = if pstate.is_git {
+                Some(clean_canonical.clone())
+            } else {
+                None
+            };
 
             let raw_tree = format!(
                 "files={}:dirs={}:manifests={}:entries={}",
@@ -148,7 +157,10 @@ pub fn handle(action: &str, payload: &serde_json::Value, db: &Mutex<Connection>)
                 pstate.important_files.join(","),
                 pstate.entry_points.join(",")
             );
-            let content_fingerprint = format!("tree_v1:{}", crate::services::filesystem::compute_sha256(&raw_tree));
+            let content_fingerprint = format!(
+                "tree_v1:{}",
+                crate::services::filesystem::compute_sha256(&raw_tree)
+            );
 
             // Insert or update projects table as single canonical source of truth
             let _ = conn.execute(
@@ -199,7 +211,7 @@ pub fn handle(action: &str, payload: &serde_json::Value, db: &Mutex<Connection>)
         }
         "update_layout" => {
             let mut state = load_workspace_or_default(&conn);
-            
+
             if let Some(visible) = payload.get("sidebar_visible").and_then(|v| v.as_bool()) {
                 state.layout.sidebar_visible = visible;
             }
@@ -218,30 +230,35 @@ pub fn handle(action: &str, payload: &serde_json::Value, db: &Mutex<Connection>)
             if let Some(width) = payload.get("right_panel_width").and_then(|v| v.as_u64()) {
                 state.layout.right_panel_width = width as u32;
             }
-            
+
             save_workspace_state(&conn, &state)?;
             serde_json::to_value(&state.layout).map_err(|e| e.to_string())
         }
         "get_recent_projects" => {
             let mut stmt = conn.prepare("SELECT name, root_path, id, project_type, last_seen_at FROM projects ORDER BY last_seen_at DESC LIMIT 10")
                 .map_err(|e| e.to_string())?;
-            let rows = stmt.query_map([], |row| {
-                Ok(serde_json::json!({
-                    "name": row.get::<_, String>(0)?,
-                    "path": row.get::<_, String>(1)?,
-                    "id": row.get::<_, String>(2)?,
-                    "type": row.get::<_, String>(3)?,
-                    "last_seen_at": row.get::<_, String>(4)?,
-                }))
-            }).map_err(|e| e.to_string())?;
-            
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(serde_json::json!({
+                        "name": row.get::<_, String>(0)?,
+                        "path": row.get::<_, String>(1)?,
+                        "id": row.get::<_, String>(2)?,
+                        "type": row.get::<_, String>(3)?,
+                        "last_seen_at": row.get::<_, String>(4)?,
+                    }))
+                })
+                .map_err(|e| e.to_string())?;
+
             let projects: Vec<serde_json::Value> = rows.flatten().collect();
             Ok(serde_json::json!({ "projects": projects }))
         }
         "save_state" => {
             let mut state = load_workspace_or_default(&conn);
             if let Some(open_files) = payload.get("open_files").and_then(|v| v.as_array()) {
-                state.open_files = open_files.iter().filter_map(|f| f.as_str().map(|s| s.to_string())).collect();
+                state.open_files = open_files
+                    .iter()
+                    .filter_map(|f| f.as_str().map(|s| s.to_string()))
+                    .collect();
             }
             if let Some(active_model) = payload.get("active_model") {
                 state.active_model = active_model.as_str().map(|s| s.to_string());
