@@ -13,6 +13,7 @@ impl OllamaClient {
     pub fn new(base_url: Option<&str>) -> Self {
         Self {
             client: Client::builder()
+                .connect_timeout(std::time::Duration::from_millis(350))
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .unwrap_or_default(),
@@ -120,7 +121,7 @@ impl OllamaClient {
     pub async fn tags(&self) -> Result<OllamaTagsResponse, String> {
         let resp = self.client
             .get(format!("{}/api/tags", self.base_url))
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_millis(1000))
             .send()
             .await
             .map_err(|e| format!("Ollama unreachable: {e}"))?;
@@ -135,7 +136,7 @@ impl OllamaClient {
         let resp = self.client
             .post(format!("{}/api/show", self.base_url))
             .json(&OllamaShowRequest { name: model.to_string() })
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_millis(1500))
             .send()
             .await
             .map_err(|e| format!("Ollama unreachable: {e}"))?;
@@ -149,7 +150,7 @@ impl OllamaClient {
     pub async fn is_reachable(&self) -> bool {
         self.client
             .get(format!("{}/api/tags", self.base_url))
-            .timeout(std::time::Duration::from_secs(3))
+            .timeout(std::time::Duration::from_millis(500))
             .send()
             .await
             .map(|r| r.status().is_success())

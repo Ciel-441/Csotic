@@ -679,12 +679,11 @@ export const BrainGraphView: React.FC<BrainGraphViewProps> = ({
               display: "flex",
               alignItems: "center",
               gap: 8,
-              background: isDark ? "rgba(14, 10, 12, 0.8)" : "rgba(255, 255, 255, 0.85)",
-              backdropFilter: "blur(20px)",
-              border: `1px solid ${isDark ? "rgba(239, 68, 68, 0.18)" : "rgba(0, 0, 0, 0.08)"}`,
+              background: isDark ? "#202024" : "#ffffff",
+              border: `1px solid ${isDark ? "#2e2e34" : "#e2e8f0"}`,
               borderRadius: 20,
               padding: "6px 14px",
-              boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
+              boxShadow: "0 4px 16px rgba(0, 0, 0, 0.25)",
             }}
           >
             <Search size={13} color="var(--color-text-tertiary)" />
@@ -725,12 +724,11 @@ export const BrainGraphView: React.FC<BrainGraphViewProps> = ({
               display: "flex",
               alignItems: "center",
               gap: 4,
-              background: isDark ? "rgba(14, 10, 12, 0.8)" : "rgba(255, 255, 255, 0.85)",
-              backdropFilter: "blur(20px)",
-              border: `1px solid ${isDark ? "rgba(239, 68, 68, 0.18)" : "rgba(0, 0, 0, 0.08)"}`,
+              background: isDark ? "#202024" : "#ffffff",
+              border: `1px solid ${isDark ? "#2e2e34" : "#e2e8f0"}`,
               borderRadius: 20,
               padding: "4px 6px",
-              boxShadow: "0 8px 32px rgba(0, 0, 0, 0.25)",
+              boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)",
             }}
           >
             <button
@@ -800,15 +798,14 @@ export const BrainGraphView: React.FC<BrainGraphViewProps> = ({
               display: "flex",
               alignItems: "center",
               gap: 8,
-              background: isDark ? "rgba(14, 10, 12, 0.8)" : "rgba(255, 255, 255, 0.85)",
-              backdropFilter: "blur(20px)",
-              border: `1px solid ${isDark ? "rgba(239, 68, 68, 0.18)" : "rgba(0, 0, 0, 0.08)"}`,
+              background: isDark ? "#202024" : "#ffffff",
+              border: `1px solid ${isDark ? "#2e2e34" : "#e2e8f0"}`,
               borderRadius: 20,
               padding: "5px 12px",
               fontSize: "11px",
               color: "var(--color-text-secondary)",
               fontWeight: 600,
-              boxShadow: "0 8px 32px rgba(0, 0, 0, 0.25)",
+              boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)",
             }}
           >
             <Sparkles size={12} color="#ef4444" />
@@ -822,12 +819,11 @@ export const BrainGraphView: React.FC<BrainGraphViewProps> = ({
               display: "flex",
               alignItems: "center",
               gap: 2,
-              background: isDark ? "rgba(14, 10, 12, 0.8)" : "rgba(255, 255, 255, 0.85)",
-              backdropFilter: "blur(20px)",
-              border: `1px solid ${isDark ? "rgba(239, 68, 68, 0.18)" : "rgba(0, 0, 0, 0.08)"}`,
+              background: isDark ? "#202024" : "#ffffff",
+              border: `1px solid ${isDark ? "#2e2e34" : "#e2e8f0"}`,
               borderRadius: 20,
               padding: "3px 5px",
-              boxShadow: "0 8px 32px rgba(0, 0, 0, 0.25)",
+              boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)",
             }}
           >
             <button
@@ -950,13 +946,12 @@ export const BrainGraphView: React.FC<BrainGraphViewProps> = ({
             top: 64,
             right: 16,
             width: 270,
-            background: isDark ? "rgba(14, 10, 12, 0.92)" : "rgba(255, 255, 255, 0.95)",
-            backdropFilter: "blur(24px)",
-            border: `1px solid ${isDark ? "rgba(239, 68, 68, 0.25)" : "rgba(0, 0, 0, 0.1)"}`,
+            background: isDark ? "#202024" : "#ffffff",
+            border: `1px solid ${isDark ? "#2e2e34" : "#e2e8f0"}`,
             borderRadius: 14,
             padding: "14px 16px",
             zIndex: 20,
-            boxShadow: "0 16px 40px rgba(0, 0, 0, 0.5)",
+            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.4)",
             display: "flex",
             flexDirection: "column",
             gap: 12,
@@ -1081,19 +1076,18 @@ export const BrainGraphView: React.FC<BrainGraphViewProps> = ({
             position: "absolute",
             bottom: 16,
             left: 16,
-            background: isDark ? "rgba(14, 10, 12, 0.88)" : "rgba(255, 255, 255, 0.9)",
-            backdropFilter: "blur(24px)",
+            background: isDark ? "#202024" : "#ffffff",
             border: `1px solid ${
               inspectedNode.kind === "note"
                 ? "rgba(239, 68, 68, 0.45)"
                 : isDark
-                ? "rgba(255, 255, 255, 0.1)"
-                : "rgba(0, 0, 0, 0.1)"
+                ? "#2e2e34"
+                : "#e2e8f0"
             }`,
             borderRadius: 12,
             padding: "12px 16px",
             zIndex: 10,
-            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.4)",
+            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.35)",
             maxWidth: 320,
             display: "flex",
             flexDirection: "column",

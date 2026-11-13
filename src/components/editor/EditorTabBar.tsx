@@ -4,11 +4,11 @@ import {
   X, 
   Columns, 
   Eye, 
-  XSquare,
-  Play,
   Puzzle,
+  Code2,
 } from "lucide-react";
 import { getFileIcon } from "./FileIcons";
+import { ClaudeIcon } from "../ClaudeIcon";
 
 export { getFileIcon };
 
@@ -25,7 +25,6 @@ interface EditorTabBarProps {
   activeViewMode?: "code" | "split" | "preview" | "diff";
   onViewModeChange?: (mode: "code" | "split" | "preview" | "diff") => void;
   hasPreviewableFile?: boolean;
-  onRunCode?: () => void;
 }
 
 function TabItem({
@@ -76,12 +75,16 @@ function TabItem({
       }}
       title={tab.path}
     >
-      {tab.path?.startsWith("extension:") ? (
+      {tab.path === "csotic://welcome" || tab.id === "welcome" ? (
+        <Code2 size={13} style={{ color: "var(--color-accent-primary, #ef4444)", flexShrink: 0 }} />
+      ) : tab.path?.startsWith("extension:") ? (
         <Puzzle size={13} style={{ color: "#ef4444", flexShrink: 0 }} />
+      ) : tab.path?.startsWith("claude-code:") ? (
+        <ClaudeIcon size={14} />
       ) : (
         getFileIcon(fileName)
       )}
-      <span style={{ fontWeight: isActive ? 500 : 400 }}>{fileName}</span>
+      <span style={{ fontWeight: isActive ? 500 : 400 }}>{tab.path === "csotic://welcome" || tab.id === "welcome" ? "Welcome" : fileName}</span>
 
       {/* Dirty indicator / close button with interactive hover morphing */}
       <div style={{ display: "flex", alignItems: "center", width: 18, height: 18, justifyContent: "center", marginLeft: 2 }}>
@@ -149,10 +152,10 @@ export function EditorTabBar({
   activeViewMode = "code",
   onViewModeChange,
   hasPreviewableFile = false,
-  onRunCode,
 }: EditorTabBarProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -161,9 +164,21 @@ export function EditorTabBar({
         setContextMenu(null);
       }
     };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
     document.addEventListener("mousedown", handleOutside);
-    return () => document.removeEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, [contextMenu]);
+
+  // Keep the active tab visible when it changes (opened from explorer, Ctrl+P, closing neighbours...).
+  useEffect(() => {
+    listRef.current?.querySelector(".editor-tab--active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeTabId, tabs.length]);
 
   if (tabs.length === 0) {
     return null;
@@ -171,9 +186,10 @@ export function EditorTabBar({
 
   const handleTabContextMenu = (e: React.MouseEvent, tabId: string) => {
     e.preventDefault();
+    // Clamp so the menu never opens off-screen near the right/bottom edge.
     setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
+      x: Math.min(e.clientX, window.innerWidth - 170),
+      y: Math.min(e.clientY, window.innerHeight - 150),
       tabId,
     });
   };
@@ -191,7 +207,14 @@ export function EditorTabBar({
       position: "relative",
     }}>
       {/* Tab List */}
-      <div className="editor-tab-bar__list" style={{
+      <div
+        ref={listRef}
+        className="editor-tab-bar__list"
+        onWheel={(e) => {
+          // Scrollbar is hidden, so map the vertical wheel to horizontal tab scrolling.
+          if (e.deltaY !== 0) e.currentTarget.scrollLeft += e.deltaY;
+        }}
+        style={{
         display: "flex",
         alignItems: "center",
         height: "100%",
@@ -211,30 +234,13 @@ export function EditorTabBar({
         ))}
       </div>
 
-      {/* Action Buttons: Run Code, Live Preview, Split Editor, Close All */}
+      {/* Action Buttons: Live Preview, Split Editor (Close All lives in the tab context menu) */}
       <div className="editor-tab-bar__actions" style={{
         display: "flex",
         alignItems: "center",
         gap: 4,
         padding: "0 8px",
       }}>
-        {onRunCode && (
-          <button
-            className="btn btn--icon"
-            onClick={onRunCode}
-            title="Run Code in Terminal (Ctrl+F5)"
-            style={{
-              width: 26,
-              height: 26,
-              padding: 0,
-              color: "#34d399",
-              background: "rgba(52, 211, 153, 0.12)",
-              borderRadius: 4,
-            }}
-          >
-            <Play size={13} fill="#34d399" />
-          </button>
-        )}
         {hasPreviewableFile && onViewModeChange && (
           <button
             className={`btn btn--icon ${activeViewMode === "preview" ? "btn--active" : ""}`}
@@ -257,18 +263,6 @@ export function EditorTabBar({
           </button>
         )}
 
-        {onCloseAll && tabs.length > 1 && (
-          <button
-            className="btn btn--icon"
-            onClick={onCloseAll}
-            title="Close All Tabs"
-            style={{ width: 26, height: 26, padding: 0, color: "var(--color-text-tertiary)" }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = "#ef4444")}
-            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--color-text-tertiary)")}
-          >
-            <XSquare size={14} />
-          </button>
-        )}
       </div>
 
       {/* Tab Context Menu */}

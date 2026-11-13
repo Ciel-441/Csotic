@@ -2,6 +2,7 @@ use rusqlite::{Connection, Result, params};
 use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct Node {
     pub id: String, // e.g., "file:///src/main.rs" or "symbol://MyStruct"
     pub project_id: Option<String>,
@@ -17,6 +18,7 @@ pub struct Edge {
     pub relationship: String, // "imports", "calls", "defines"
 }
 
+#[allow(dead_code)]
 pub fn init_graph_db(db: &std::sync::Mutex<Connection>) -> Result<()> {
     let conn = match db.lock() {
         Ok(c) => c,
@@ -45,6 +47,7 @@ pub fn init_graph_db(db: &std::sync::Mutex<Connection>) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn insert_node(db: &std::sync::Mutex<Connection>, node: &Node) -> Result<()> {
     let conn = match db.lock() {
         Ok(c) => c,
@@ -58,6 +61,7 @@ pub fn insert_node(db: &std::sync::Mutex<Connection>, node: &Node) -> Result<()>
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn insert_edge(db: &std::sync::Mutex<Connection>, edge: &Edge) -> Result<()> {
     let conn = match db.lock() {
         Ok(c) => c,

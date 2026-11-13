@@ -93,10 +93,10 @@ pub fn watch_workspace(project_path: &str, db: Arc<Mutex<Connection>>) -> Result
                     for rel in ready_keys {
                         if let Some((path_buf, _, is_delete)) = pending.remove(&rel) {
                             if is_delete || !path_buf.exists() {
-                                let _ = crate::services::incremental::on_file_deleted(&root_str_clone, &rel, &db_clone);
+                                crate::services::incremental::on_file_deleted(&root_str_clone, &rel, &db_clone);
                             } else if path_buf.is_file() {
                                 if let Ok(content) = std::fs::read_to_string(&path_buf) {
-                                    let _ = crate::services::incremental::on_file_changed(&root_str_clone, &rel, &content, &db_clone);
+                                    crate::services::incremental::on_file_changed(&root_str_clone, &rel, &content, &db_clone);
                                 }
                             }
                         }
@@ -112,7 +112,7 @@ pub fn watch_workspace(project_path: &str, db: Arc<Mutex<Connection>>) -> Result
             for path in event.paths {
                 let _ = tx_clone.send(WatchEvent {
                     path_buf: path,
-                    kind: event.kind.clone(),
+                    kind: event.kind,
                 });
             }
         }

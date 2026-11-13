@@ -12,7 +12,15 @@ export type DialogOptions = {
   resolve: (value: any) => void;
 };
 
+export type ToastItem = {
+  id: string;
+  message: string;
+  type: "success" | "error" | "warning" | "info";
+  duration: number;
+};
+
 let showDialogHandler: ((options: DialogOptions) => void) | null = null;
+let showToastHandler: ((toast: ToastItem) => void) | null = null;
 
 export const CustomDialog = {
   alert(message: string, title = "Notice"): Promise<boolean> {
@@ -59,21 +67,43 @@ export const CustomDialog = {
       }
     });
   },
+
+  toast(message: string, type: "success" | "error" | "warning" | "info" = "info", duration = 3000): void {
+    if (showToastHandler) {
+      showToastHandler({
+        id: `toast_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        message,
+        type,
+        duration,
+      });
+    } else {
+      console.log(`[Toast ${type}]:`, message);
+    }
+  },
 };
 
 export function GlobalDialogProvider() {
   const [dialog, setDialog] = useState<DialogOptions | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [inputValue, setInputValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     showDialogHandler = setDialog;
+    showToastHandler = (t: ToastItem) => {
+      setToasts((prev) => [...prev, t]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((item) => item.id !== t.id));
+      }, t.duration);
+    };
+
     // Intercept standard window.alert
     window.alert = (msg: string) => {
       CustomDialog.alert(msg);
     };
     return () => {
       showDialogHandler = null;
+      showToastHandler = null;
     };
   }, []);
 
@@ -107,11 +137,10 @@ export function GlobalDialogProvider() {
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [dialog, inputValue]);
 
-  if (!dialog) return null;
-
-  const isDanger = dialog.isDanger ?? (dialog.type === "confirm" && /delete|remove|erase|discard|destroy/i.test(dialog.message + " " + (dialog.title || "")));
+  const isDanger = dialog ? (dialog.isDanger ?? (dialog.type === "confirm" && /delete|remove|erase|discard|destroy/i.test(dialog.message + " " + (dialog.title || "")))) : false;
 
   const handleConfirm = () => {
+    if (!dialog) return;
     if (dialog.type === "prompt") {
       dialog.resolve(inputValue);
     } else {
@@ -121,6 +150,7 @@ export function GlobalDialogProvider() {
   };
 
   const handleCancel = () => {
+    if (!dialog) return;
     if (dialog.type === "prompt") {
       dialog.resolve(null);
     } else {
@@ -130,13 +160,13 @@ export function GlobalDialogProvider() {
   };
 
   return (
-    <div
+    <>
+      {dialog && (
+        <div
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0, 0, 0, 0.65)",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
+        background: "rgba(0, 0, 0, 0.5)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -367,5 +397,57 @@ export function GlobalDialogProvider() {
         </div>
       </div>
     </div>
+    )}
+
+    {/* Transient Toast Notifications */}
+    {toasts.length > 0 && (
+      <div style={{
+        position: "fixed",
+        bottom: 24,
+        right: 24,
+        zIndex: 100000,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        pointerEvents: "none",
+      }}>
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            style={{
+              padding: "10px 16px",
+              background: "#16131f",
+              border: t.type === "error"
+                ? "1px solid #7f1d1d"
+                : t.type === "success"
+                ? "1px solid #166534"
+                : t.type === "warning"
+                ? "1px solid #854d0e"
+                : "1px solid #2f283a",
+              borderRadius: 8,
+              color: t.type === "error"
+                ? "#fca5a5"
+                : t.type === "success"
+                ? "#86efac"
+                : t.type === "warning"
+                ? "#fde047"
+                : "#f3f4f6",
+              fontSize: "12.5px",
+              fontWeight: 500,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.85), 0 0 1px 1px rgba(255,255,255,0.06)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              pointerEvents: "auto",
+              animation: "slideInUp 0.15s ease",
+            }}
+          >
+            <span>{t.type === "error" ? "⚠️" : t.type === "success" ? "✅" : t.type === "warning" ? "⚡" : "ℹ️"}</span>
+            <span>{t.message}</span>
+          </div>
+        ))}
+      </div>
+    )}
+    </>
   );
 }

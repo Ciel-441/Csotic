@@ -13,6 +13,8 @@ import {
   Loader2,
   Sparkles,
   Link2,
+  RefreshCw,
+  Check,
 } from "lucide-react";
 
 interface BrainSidebarPanelProps {
@@ -39,6 +41,23 @@ export const BrainSidebarPanel: React.FC<BrainSidebarPanelProps> = ({
   const [isCreating, setIsCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [selectedTab, setSelectedTab] = useState<"notes" | "backlinks">("notes");
+  const [isSyncingAi, setIsSyncingAi] = useState(false);
+  const [syncedJustNow, setSyncedJustNow] = useState(false);
+
+  // Sync AI bridges across workspace
+  const handleSyncAi = useCallback(async () => {
+    if (!projectPath) return;
+    setIsSyncingAi(true);
+    try {
+      await brain.syncAiBridges(projectPath);
+      setSyncedJustNow(true);
+      setTimeout(() => setSyncedJustNow(false), 2500);
+    } catch (err) {
+      console.error("Failed to sync AI bridges:", err);
+    } finally {
+      setIsSyncingAi(false);
+    }
+  }, [projectPath]);
 
   // Fetch project notes
   const fetchNotes = useCallback(async () => {
@@ -218,6 +237,75 @@ export const BrainSidebarPanel: React.FC<BrainSidebarPanelProps> = ({
             <Plus size={13} />
           </button>
         </div>
+      </div>
+
+      {/* Universal AI Memory Status Bar */}
+      <div
+        style={{
+          padding: "6px 12px",
+          background: isDark ? "#1c1c20" : "#f4f4f6",
+          borderBottom: "1px solid var(--color-border-default)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 6,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden" }}>
+          <div
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: "#22c55e",
+              boxShadow: "0 0 6px rgba(34, 197, 94, 0.6)",
+              flexShrink: 0,
+            }}
+          />
+          <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: "11px", color: "var(--color-text-primary)", display: "flex", alignItems: "center", gap: 4 }}>
+              <span>Universal AI Brain Active</span>
+            </div>
+            <div style={{ fontSize: "10px", color: "var(--color-text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              Claude, Cursor, Copilot, Cline & Agents
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={handleSyncAi}
+          disabled={isSyncingAi}
+          title="Sync Obsidian Brain memory bridges with all installed AI assistants and extensions"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "3px 8px",
+            fontSize: "10px",
+            fontWeight: 500,
+            background: syncedJustNow ? "rgba(34, 197, 94, 0.15)" : (isDark ? "#27272d" : "#e5e5ea"),
+            border: `1px solid ${syncedJustNow ? "#22c55e" : "var(--color-border-default)"}`,
+            borderRadius: 4,
+            color: syncedJustNow ? "#22c55e" : "var(--color-text-secondary)",
+            cursor: isSyncingAi ? "wait" : "pointer",
+            flexShrink: 0,
+            transition: "all 0.15s ease",
+          }}
+        >
+          {syncedJustNow ? (
+            <>
+              <Check size={11} /> Synced
+            </>
+          ) : isSyncingAi ? (
+            <>
+              <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> Syncing…
+            </>
+          ) : (
+            <>
+              <RefreshCw size={11} /> Sync AIs
+            </>
+          )}
+        </button>
       </div>
 
       {/* Tabs: Notes vs Backlinks with Forge Red highlight */}

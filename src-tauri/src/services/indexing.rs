@@ -24,56 +24,54 @@ pub fn handle(action: &str, payload: &serde_json::Value, db: &Mutex<Connection>)
             let now = chrono::Utc::now().to_rfc3339();
             let conn = db.lock().map_err(|e| format!("DB lock error: {e}"))?;
 
-            for result in walker {
-                if let Ok(entry) = result {
-                    let path = entry.path();
-                    if path.is_file() {
-                        let path_str = path.to_string_lossy();
-                        if path_str.contains("node_modules") || path_str.contains(".git") 
-                            || path_str.contains("target") || path_str.contains("dist") {
-                            continue;
-                        }
-                        
-                        file_count += 1;
-                        let rel_path = path.strip_prefix(project_path)
-                            .unwrap_or(path)
-                            .to_string_lossy()
-                            .replace('\\', "/");
+            for entry in walker.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let path_str = path.to_string_lossy();
+                    if path_str.contains("node_modules") || path_str.contains(".git") 
+                        || path_str.contains("target") || path_str.contains("dist") {
+                        continue;
+                    }
+                    
+                    file_count += 1;
+                    let rel_path = path.strip_prefix(project_path)
+                        .unwrap_or(path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
 
-                        if let Ok(content) = fs::read_to_string(path) {
-                            let lines = content.lines().count();
-                            total_lines += lines;
-                            file_tree.push(format!("{}: {} lines", rel_path, lines));
+                    if let Ok(content) = fs::read_to_string(path) {
+                        let lines = content.lines().count();
+                        total_lines += lines;
+                        file_tree.push(format!("{}: {} lines", rel_path, lines));
 
-                            let hash = crate::services::filesystem::compute_sha256(&content);
-                            let size = content.len() as i64;
-                            let mtime = fs::metadata(path)
-                                .and_then(|m| m.modified())
-                                .ok()
-                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                                .map(|d| d.as_secs() as i64)
-                                .unwrap_or(0);
-                            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        let hash = crate::services::filesystem::compute_sha256(&content);
+                        let size = content.len() as i64;
+                        let mtime = fs::metadata(path)
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
-                            // Insert into file_state
+                        // Insert into file_state
+                        let _ = conn.execute(
+                            "INSERT OR REPLACE INTO file_state (
+                                project_id, relative_path, content_hash, size, mtime, language, indexed_at, deleted
+                            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
+                            rusqlite::params![project_id, rel_path, hash, size, mtime, ext, now],
+                        );
+
+                        // Extract and persist symbols
+                        let symbols = crate::services::symbols::extract_symbols(path, &content);
+                        for sym in symbols {
+                            let sym_id = format!("{}:{}:{}", project_id, rel_path, sym.name);
                             let _ = conn.execute(
-                                "INSERT OR REPLACE INTO file_state (
-                                    project_id, relative_path, content_hash, size, mtime, language, indexed_at, deleted
-                                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
-                                rusqlite::params![project_id, rel_path, hash, size, mtime, ext, now],
+                                "INSERT OR REPLACE INTO symbols (
+                                    id, project_id, file_path, name, kind, start_line, end_line
+                                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                                rusqlite::params![sym_id, project_id, rel_path, sym.name, sym.kind, sym.start_line as i64, sym.end_line as i64],
                             );
-
-                            // Extract and persist symbols
-                            let symbols = crate::services::symbols::extract_symbols(path, &content);
-                            for sym in symbols {
-                                let sym_id = format!("{}:{}:{}", project_id, rel_path, sym.name);
-                                let _ = conn.execute(
-                                    "INSERT OR REPLACE INTO symbols (
-                                        id, project_id, file_path, name, kind, start_line, end_line
-                                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                                    rusqlite::params![sym_id, project_id, rel_path, sym.name, sym.kind, sym.start_line as i64, sym.end_line as i64],
-                                );
-                            }
                         }
                     }
                 }

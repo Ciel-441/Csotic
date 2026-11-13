@@ -122,6 +122,7 @@ export interface EditorTab {
   language?: string;
   cursorPos?: { line: number; column: number };
   extensionData?: any;
+  claudeSessionData?: any;
 }
 
 export interface BrainNote {

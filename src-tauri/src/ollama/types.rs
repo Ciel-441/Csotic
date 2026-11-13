@@ -93,6 +93,7 @@ impl OllamaMessage {
     pub fn assistant(content: &str) -> Self {
         Self { role: "assistant".into(), content: Some(content.into()), tool_calls: None, images: None }
     }
+    #[allow(dead_code)]
     pub fn assistant_tool_calls(calls: Vec<OllamaToolCall>) -> Self {
         Self { role: "assistant".into(), content: None, tool_calls: Some(calls), images: None }
     }

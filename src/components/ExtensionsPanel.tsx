@@ -7,10 +7,11 @@ import {
   Puzzle, 
   X,
   ChevronDown,
-  ChevronRight,
+  ChevronRight, 
   Filter,
   Settings
 } from "lucide-react";
+import { ClaudeIcon } from "./ClaudeIcon";
 import { plugins as ipcPlugins } from "../services/ipc";
 import { CustomDialog } from "./GlobalDialog";
 
@@ -65,7 +66,24 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
 
   useEffect(() => {
     void loadInstalled();
+    const handleChanged = () => {
+      void loadInstalled();
+    };
+    window.addEventListener("csotic:extensions-changed", handleChanged);
+    return () => {
+      window.removeEventListener("csotic:extensions-changed", handleChanged);
+    };
   }, [loadInstalled]);
+
+  // Sync installed flag in marketplace list whenever installedList changes
+  useEffect(() => {
+    setExtensions((prev) =>
+      prev.map((item) => {
+        const isInst = installedList.some((inst) => inst.id?.toLowerCase() === item.id?.toLowerCase());
+        return item.installed !== isInst ? { ...item, installed: isInst } : item;
+      })
+    );
+  }, [installedList]);
 
   // Fetch extensions from Open VSX registry
   const fetchMarketplace = useCallback(async (query: string) => {
@@ -86,7 +104,7 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
 
       const items: ExtensionMetadata[] = (data.extensions || []).map((ext: any) => {
         const id = `${ext.namespace}.${ext.name}`;
-        const isInstalled = installedList.some((inst) => inst.id === id);
+        const isInstalled = installedList.some((inst) => inst.id?.toLowerCase() === id.toLowerCase());
         return {
           id,
           namespace: ext.namespace,
@@ -126,7 +144,8 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
 
   const handleInstall = async (ext: ExtensionMetadata, e: React.MouseEvent) => {
     e.stopPropagation();
-    setInstallingIds((prev) => new Set(prev).add(ext.id));
+    const lowerId = ext.id.toLowerCase();
+    setInstallingIds((prev) => new Set(prev).add(lowerId));
     try {
       const res = await ipcPlugins.installExtension({
         id: ext.id,
@@ -156,15 +175,17 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
         installedAt: Date.now(),
       };
 
-      setInstalledList((prev) => [updated, ...prev.filter((p) => p.id !== ext.id)]);
+      setInstalledList((prev) => [updated, ...prev.filter((p) => p.id?.toLowerCase() !== lowerId)]);
       setExtensions((prev) =>
-        prev.map((item) => (item.id === ext.id ? { ...item, installed: true } : item))
+        prev.map((item) => (item.id?.toLowerCase() === lowerId ? { ...item, installed: true } : item))
       );
+      window.dispatchEvent(new CustomEvent("csotic:extensions-changed", { detail: { id: ext.id, action: "install" } }));
     } catch (err: any) {
       console.error("Installation failed:", err);
     } finally {
       setInstallingIds((prev) => {
         const next = new Set(prev);
+        next.delete(lowerId);
         next.delete(ext.id);
         return next;
       });
@@ -181,8 +202,8 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
     : installedList;
 
   const renderExtensionItem = (ext: ExtensionMetadata) => {
-    const isInstalled = installedList.some((inst) => inst.id === ext.id);
-    const isInstalling = installingIds.has(ext.id);
+    const isInstalled = installedList.some((inst) => inst.id?.toLowerCase() === ext.id?.toLowerCase());
+    const isInstalling = installingIds.has(ext.id) || installingIds.has(ext.id?.toLowerCase());
     const isSelected = activeExtensionId === ext.id;
 
     return (
@@ -196,7 +217,7 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
           padding: "6px 10px",
           cursor: "pointer",
           background: isSelected ? "var(--color-item-active, rgba(255,255,255,0.08))" : "transparent",
-          borderLeft: isSelected ? "2px solid #0078d4" : "2px solid transparent",
+          borderLeft: isSelected ? "2px solid var(--ext-accent, #be123c)" : "2px solid transparent",
           userSelect: "none",
           transition: "background 0.1s ease",
         }}
@@ -229,6 +250,8 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
                 (e.target as HTMLElement).style.display = "none";
               }}
             />
+          ) : (ext.id?.toLowerCase().includes("claude") || ext.displayName?.toLowerCase().includes("claude")) ? (
+            <ClaudeIcon size={20} />
           ) : (
             <Puzzle size={16} style={{ color: "#ef4444", opacity: 0.8 }} />
           )}
@@ -299,6 +322,7 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
             <button
               onClick={(e) => handleInstall(ext, e)}
               disabled={isInstalling}
+              className="ext-primary-btn"
               style={{
                 height: 20,
                 padding: "0 8px",
@@ -306,7 +330,7 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
                 fontWeight: 600,
                 borderRadius: 3,
                 border: "none",
-                background: "#0078d4",
+                background: "var(--ext-btn-bg, #be123c)",
                 color: "#ffffff",
                 cursor: "pointer",
                 display: "flex",
@@ -436,7 +460,7 @@ export function ExtensionsPanel({ onOpenExtension, activeExtensionId }: Extensio
               fontSize: "10px",
               padding: "1px 6px",
               borderRadius: 10,
-              background: "#0078d4",
+              background: "var(--ext-btn-bg, #be123c)",
               color: "#ffffff",
               fontWeight: 600,
             }}>

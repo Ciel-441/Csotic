@@ -1,6 +1,7 @@
 use std::path::Path;
 use tree_sitter::{Parser, Query, QueryCursor, Node, StreamingIterator};
 use serde::{Serialize, Deserialize};
+use once_cell::sync::Lazy;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolInfo {
@@ -10,45 +11,43 @@ pub struct SymbolInfo {
     pub end_line: usize,
 }
 
+static RUST_QUERY: Lazy<Query> = Lazy::new(|| {
+    let language = tree_sitter_rust::LANGUAGE.into();
+    Query::new(&language, r#"
+    (function_item name: (identifier) @name) @function
+    (struct_item name: (type_identifier) @name) @struct
+    (enum_item name: (type_identifier) @name) @enum
+    (trait_item name: (type_identifier) @name) @trait
+    (impl_item type: (type_identifier) @name) @impl
+    "#).expect("Error compiling Rust tree-sitter query")
+});
+
+static TS_QUERY: Lazy<Query> = Lazy::new(|| {
+    let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+    Query::new(&language, r#"
+    (function_declaration name: (identifier) @name) @function
+    (class_declaration name: (type_identifier) @name) @class
+    (interface_declaration name: (type_identifier) @name) @interface
+    (type_alias_declaration name: (type_identifier) @name) @type
+    "#).expect("Error compiling TS tree-sitter query")
+});
+
+static JS_QUERY: Lazy<Query> = Lazy::new(|| {
+    let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+    Query::new(&language, r#"
+    (function_declaration name: (identifier) @name) @function
+    (class_declaration name: (identifier) @name) @class
+    "#).expect("Error compiling JS tree-sitter query")
+});
+
 pub fn extract_symbols(file_path: &Path, content: &str) -> Vec<SymbolInfo> {
     let mut parser = Parser::new();
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     
-    let (language, query_str) = match ext {
-        "rs" => {
-            (
-                tree_sitter_rust::LANGUAGE.into(),
-                r#"
-                (function_item name: (identifier) @name) @function
-                (struct_item name: (type_identifier) @name) @struct
-                (enum_item name: (type_identifier) @name) @enum
-                (trait_item name: (type_identifier) @name) @trait
-                (impl_item type: (type_identifier) @name) @impl
-                "#
-            )
-        },
-        "ts" | "tsx" => {
-            // NOTE: for now we use typescript grammar for TS.
-            (
-                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                r#"
-                (function_declaration name: (identifier) @name) @function
-                (class_declaration name: (type_identifier) @name) @class
-                (interface_declaration name: (type_identifier) @name) @interface
-                (type_alias_declaration name: (type_identifier) @name) @type
-                "#
-            )
-        },
-        "js" | "jsx" => {
-             // For JS we can also use TS grammar as a fallback.
-             (
-                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                r#"
-                (function_declaration name: (identifier) @name) @function
-                (class_declaration name: (identifier) @name) @class
-                "#
-            )
-        }
+    let (language, query): (tree_sitter::Language, &'static Query) = match ext {
+        "rs" => (tree_sitter_rust::LANGUAGE.into(), &*RUST_QUERY),
+        "ts" | "tsx" => (tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(), &*TS_QUERY),
+        "js" | "jsx" => (tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(), &*JS_QUERY),
         _ => return vec![], // unsupported language
     };
 
@@ -59,13 +58,8 @@ pub fn extract_symbols(file_path: &Path, content: &str) -> Vec<SymbolInfo> {
         None => return vec![],
     };
 
-    let query = match Query::new(&language, query_str) {
-        Ok(q) => q,
-        Err(_) => return vec![],
-    };
-
     let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+    let mut matches = cursor.matches(query, tree.root_node(), content.as_bytes());
 
     let mut symbols = Vec::new();
 
@@ -121,7 +115,6 @@ pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_extract_rust_symbols() {

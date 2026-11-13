@@ -75,7 +75,131 @@ pub fn ensure_brain_vault(project_path: &str) -> std::path::PathBuf {
         );
     }
 
+    // Synchronize universal AI memory bridges so ALL AI tools (Claude, Cursor, Copilot, Cline, Continue, Agents) connect to the brain
+    let _ = sync_universal_ai_brain_bridges(project_path);
+
     brain_dir
+}
+
+fn sync_bridge_file(file_path: &Path, default_content: &str, keyword: &str) {
+    if !file_path.exists() {
+        let _ = fs::write(file_path, default_content);
+    } else if let Ok(existing) = fs::read_to_string(file_path) {
+        if !existing.contains(keyword) {
+            let notice = "\n\n## 🧠 Obsidian Knowledge Brain Vault\n\
+This project maintains an Obsidian-compatible Knowledge Brain vault in `.forge/brain/`.\n\
+- **Architecture**: `.forge/brain/architecture.md`\n\
+- **Decisions (ADRs)**: `.forge/brain/decisions.md`\n\
+- **Tasks & Roadmap**: `.forge/brain/tasks.md`\n\
+Refer to and maintain these notes for architectural context and project memory.\n";
+            let _ = fs::write(file_path, format!("{}{}", existing.trim_end(), notice));
+        }
+    }
+}
+
+/// Synchronizes universal AI instructions and memory bridges across the workspace.
+/// Guarantees that ALL AI assistants (Claude Code, Cursor, Copilot, Cline, Continue, Roo Code, Aider, Agents)
+/// have direct instructions pointing to the Obsidian Brain vault in `.forge/brain/`.
+pub fn sync_universal_ai_brain_bridges(project_path: &str) -> Result<(), String> {
+    let root = Path::new(project_path);
+    if !root.is_dir() {
+        return Ok(());
+    }
+
+    let brain_dir = root.join(".forge").join("brain");
+    if !brain_dir.exists() {
+        let _ = fs::create_dir_all(&brain_dir);
+    }
+
+    // 1. CLAUDE.md (for Claude Code CLI and Anthropic AI extensions)
+    let claude_md = root.join("CLAUDE.md");
+    let claude_content = "# Claude Code Project Guidelines & Memory Vault\n\n\
+This project maintains an Obsidian-compatible Knowledge Brain vault located in `.forge/brain/`.\n\
+Always refer to and maintain these persistent memory notes during development:\n\n\
+- **Architecture**: `.forge/brain/architecture.md` (System layers, module boundaries, core patterns)\n\
+- **Decisions (ADRs)**: `.forge/brain/decisions.md` (Key technical trade-offs and architectural decisions)\n\
+- **Tasks & Roadmap**: `.forge/brain/tasks.md` (Active initiatives, technical debt, and dev log)\n\n\
+### Guidelines for Claude Code:\n\
+1. Read `.forge/brain/architecture.md` to understand system patterns before proposing significant changes.\n\
+2. Update `.forge/brain/decisions.md` when making key technical decisions or introducing new conventions.\n\
+3. Check off completed items in `.forge/brain/tasks.md` and log new work items.\n\
+4. Use Obsidian `[[wikilink]]` syntax when referencing related notes or code components.\n";
+    sync_bridge_file(&claude_md, claude_content, ".forge/brain");
+
+    // 2. .cursorrules (for Cursor and Windsurf)
+    let cursor_rules = root.join(".cursorrules");
+    let cursor_content = "# Cursor AI Project Guidelines & Knowledge Brain\n\n\
+This project is indexed with an Obsidian Knowledge Brain vault in `.forge/brain/`.\n\
+Follow these memory rules:\n\n\
+1. Consult `.forge/brain/architecture.md` for architectural constraints, data flows, and design rules.\n\
+2. Reference `.forge/brain/decisions.md` before refactoring or changing design patterns.\n\
+3. Keep track of active features and progress in `.forge/brain/tasks.md`.\n\
+4. Link notes and code using Obsidian-style `[[note-name]]` syntax.\n";
+    sync_bridge_file(&cursor_rules, cursor_content, ".forge/brain");
+
+    // 2b. .cursor/rules/brain.mdc (modern Cursor MDC format)
+    let cursor_rules_dir = root.join(".cursor").join("rules");
+    let _ = fs::create_dir_all(&cursor_rules_dir);
+    let cursor_mdc = cursor_rules_dir.join("brain.mdc");
+    let mdc_content = "---\n\
+description: Obsidian Knowledge Brain vault instructions for Cursor\n\
+globs: *\n\
+alwaysApply: true\n\
+---\n\n\
+# Obsidian Knowledge Brain Integration\n\n\
+This project maintains persistent system context in `.forge/brain/`:\n\
+- System Architecture: `.forge/brain/architecture.md`\n\
+- Architectural Decisions: `.forge/brain/decisions.md`\n\
+- Tasks & Dev Log: `.forge/brain/tasks.md`\n\n\
+Always respect decisions recorded in these files and log new architectural changes.\n";
+    let _ = fs::write(&cursor_mdc, mdc_content);
+
+    // 3. .github/copilot-instructions.md (for GitHub Copilot)
+    let github_dir = root.join(".github");
+    let _ = fs::create_dir_all(&github_dir);
+    let copilot_file = github_dir.join("copilot-instructions.md");
+    let copilot_content = "# GitHub Copilot Project Instructions & Architecture Knowledge\n\n\
+This project maintains its architectural ground truth and knowledge brain in `.forge/brain/`.\n\n\
+## Brain Vault Notes:\n\
+- **Architecture**: `.forge/brain/architecture.md` (System components, APIs, and state patterns)\n\
+- **Decisions**: `.forge/brain/decisions.md` (Architectural Decision Records)\n\
+- **Tasks**: `.forge/brain/tasks.md` (Active tasks and roadmap)\n\n\
+Always follow architectural patterns established in `.forge/brain/architecture.md` when generating code.\n";
+    sync_bridge_file(&copilot_file, copilot_content, ".forge/brain");
+
+    // 4. .clinerules (for Cline and Roo Code)
+    let cline_rules = root.join(".clinerules");
+    let cline_content = "# Cline & Roo Code Project Memory & Rules\n\n\
+This project has an Obsidian Knowledge Brain vault in `.forge/brain/`.\n\n\
+## Memory Vault Instructions:\n\
+- Read `.forge/brain/architecture.md` at start of task for system context.\n\
+- Check `.forge/brain/decisions.md` for accepted patterns and ADRs.\n\
+- Update `.forge/brain/tasks.md` upon completion of user goals.\n\
+- Maintain `[[wikilinks]]` between related notes and concepts.\n";
+    sync_bridge_file(&cline_rules, cline_content, ".forge/brain");
+
+    // 5. AGENTS.md (for Antigravity, OpenAI Codex, Aider, LangChain, AutoGen, and Universal Agents)
+    let agents_md = root.join("AGENTS.md");
+    let agents_content = "# Universal AI Agent Knowledge Brain Instructions\n\n\
+All AI agents working in this repository must access and respect the Obsidian Knowledge Brain vault.\n\n\
+## Knowledge Vault Location: `.forge/brain/`\n\
+- `architecture.md`: System design, module relationships, and core abstractions.\n\
+- `decisions.md`: Architectural Decision Records (ADRs).\n\
+- `tasks.md`: Current backlog, active development tasks, and roadmap.\n\n\
+## Operational Protocol:\n\
+1. Check `.forge/brain/architecture.md` prior to code generation to ensure alignment with architectural standards.\n\
+2. Update `.forge/brain/decisions.md` when introducing new patterns, libraries, or structural changes.\n\
+3. Synchronize `.forge/brain/tasks.md` when completing or planning features.\n";
+    sync_bridge_file(&agents_md, agents_content, ".forge/brain");
+
+    // 6. .continuerules (for Continue.dev)
+    let continue_rules = root.join(".continuerules");
+    let continue_content = "# Continue.dev Context & Knowledge Vault\n\n\
+This project utilizes an Obsidian Knowledge Brain in `.forge/brain/`.\n\
+Always consult `.forge/brain/architecture.md` and `.forge/brain/decisions.md` for architectural context.\n";
+    sync_bridge_file(&continue_rules, continue_content, ".forge/brain");
+
+    Ok(())
 }
 
 /// Lists all notes in the project's .forge/brain vault.
@@ -209,11 +333,10 @@ pub fn get_graph_data(project_path: &str) -> BrainGraphData {
             let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
             // Skip excessive raw benchmark or temporary generated files
-            if file_name.starts_with("bench_") || file_name.starts_with('.') {
-                if !is_brain_note {
+            if (file_name.starts_with("bench_") || file_name.starts_with('.'))
+                && !is_brain_note {
                     continue;
                 }
-            }
 
             let kind = if is_brain_note {
                 "note"
@@ -440,6 +563,23 @@ pub fn handle(action: &str, payload: &serde_json::Value) -> Result<serde_json::V
                 .ok_or("Missing 'target_path'")?;
             let backlinks = get_backlinks(project_path, target_path);
             serde_json::to_value(backlinks).map_err(|e| e.to_string())
+        }
+        "sync_ai_bridges" => {
+            let project_path = payload.get("project_path").and_then(|v| v.as_str())
+                .ok_or("Missing 'project_path'")?;
+            sync_universal_ai_brain_bridges(project_path)?;
+            Ok(serde_json::json!({
+                "synced": true,
+                "bridges": [
+                    "CLAUDE.md",
+                    ".cursorrules",
+                    ".cursor/rules/brain.mdc",
+                    ".github/copilot-instructions.md",
+                    ".clinerules",
+                    "AGENTS.md",
+                    ".continuerules"
+                ]
+            }))
         }
         _ => Err(format!("Unknown brain action: {action}")),
     }

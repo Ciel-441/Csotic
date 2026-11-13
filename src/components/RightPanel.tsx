@@ -5,15 +5,13 @@
  * Retrieved memory bank, Project Truth Index, and Live Changed Files.
  */
 import { useState, useEffect } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "../services/events";
 import { memory, indexing, git } from "../services/ipc";
 import { ProjectInfo } from "../types/ipc";
 import * as diff from "diff";
 import {
   Layers,
   Target,
-  Activity,
-  Clock,
   CheckCircle2,
   Loader2,
   Circle,
@@ -25,13 +23,16 @@ import {
   FolderGit2,
   Sparkles,
   Database,
+  X,
 } from "lucide-react";
 
 interface RightPanelProps {
   visible: boolean;
+  onClose?: () => void;
   onFileClick?: (path: string) => void;
   activeProject: ProjectInfo | null;
   width?: number;
+  theme?: "dark" | "light";
 }
 
 interface PlanStep {
@@ -57,7 +58,8 @@ interface MemoryItem {
   created_at: string;
 }
 
-export function RightPanel({ visible, onFileClick, activeProject, width }: RightPanelProps) {
+export function RightPanel({ visible, onClose, onFileClick, activeProject, width, theme = "dark" }: RightPanelProps) {
+  const isLight = theme === "light";
   const [agentState, setAgentState] = useState<AgentState>({
     status: "idle",
     objective: "No active task",
@@ -273,9 +275,8 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
     <aside
       className="right-panel"
       style={{
-        background: "rgba(11, 12, 16, 0.95)",
-        backdropFilter: "blur(20px)",
-        borderLeft: "1px solid rgba(255, 255, 255, 0.07)",
+        background: isLight ? "#ffffff" : "#0a0b10",
+        borderLeft: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.07)",
         display: "flex",
         flexDirection: "column",
         height: "100%",
@@ -291,80 +292,106 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "12px 14px",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
-          background: "linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 100%)",
+          padding: "8px 12px",
+          height: 38,
+          borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.06)",
+          background: isLight ? "#f8fafc" : "#0d0e14",
+          userSelect: "none",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <div
-            style={{
-              width: 22,
-              height: 22,
-              borderRadius: 6,
-              background: "rgba(239, 68, 68, 0.12)",
-              border: "1px solid rgba(239, 68, 68, 0.25)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#ef4444",
-            }}
-          >
-            <Layers size={13} />
-          </div>
+          <Layers size={13} style={{ color: isLight ? "#64748b" : "#94a3b8" }} />
           <span
             style={{
-              fontSize: "12px",
-              fontWeight: 700,
-              letterSpacing: "0.4px",
-              color: "#ffffff",
+              fontSize: "11px",
+              fontWeight: 600,
+              letterSpacing: "0.06em",
+              color: isLight ? "#0f172a" : "#cbd5e1",
               textTransform: "uppercase",
             }}
           >
-            Context Panel
+            Context Telemetry
           </span>
         </div>
 
-        {/* Live Status Beacon */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "2px 8px",
-            borderRadius: 12,
-            background: isBusy
-              ? "rgba(16, 185, 129, 0.12)"
-              : agentState.status === "completed"
-              ? "rgba(59, 130, 246, 0.12)"
-              : "rgba(255, 255, 255, 0.04)",
-            border: isBusy
-              ? "1px solid rgba(16, 185, 129, 0.3)"
-              : agentState.status === "completed"
-              ? "1px solid rgba(59, 130, 246, 0.3)"
-              : "1px solid rgba(255, 255, 255, 0.08)",
-          }}
-        >
-          <span
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Live Status Beacon */}
+          <div
             style={{
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              backgroundColor: isBusy ? "#10b981" : agentState.status === "completed" ? "#3b82f6" : "#64748b",
-              boxShadow: isBusy ? "0 0 8px #10b981" : "none",
-            }}
-          />
-          <span
-            style={{
-              fontSize: "10px",
-              fontWeight: 700,
-              letterSpacing: "0.5px",
-              color: isBusy ? "#34d399" : agentState.status === "completed" ? "#60a5fa" : "var(--color-text-tertiary)",
-              textTransform: "uppercase",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "2px 7px",
+              borderRadius: 4,
+              background: isBusy
+                ? "rgba(16, 185, 129, 0.1)"
+                : agentState.status === "completed"
+                ? "rgba(56, 189, 248, 0.1)"
+                : "rgba(255, 255, 255, 0.04)",
+              border: isBusy
+                ? "1px solid rgba(16, 185, 129, 0.25)"
+                : agentState.status === "completed"
+                ? "1px solid rgba(56, 189, 248, 0.25)"
+                : "1px solid rgba(255, 255, 255, 0.06)",
             }}
           >
-            {agentState.status}
-          </span>
+            <span
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: "50%",
+                backgroundColor: isBusy ? "#10b981" : agentState.status === "completed" ? "#38bdf8" : "#64748b",
+                boxShadow: isBusy ? "0 0 6px #10b981" : "none",
+              }}
+            />
+            <span
+              style={{
+                fontSize: "9.5px",
+                fontWeight: 600,
+                letterSpacing: "0.05em",
+                color: isBusy ? "#34d399" : agentState.status === "completed" ? "#38bdf8" : "#94a3b8",
+                textTransform: "uppercase",
+              }}
+            >
+              {agentState.status}
+              {agentState.status !== "idle" && agentState.elapsed_ms > 0 && (
+                <span style={{ marginLeft: 4, opacity: 0.8, fontFamily: "var(--font-mono, monospace)" }}>
+                  · {(agentState.elapsed_ms / 1000).toFixed(1)}s
+                </span>
+              )}
+            </span>
+          </div>
+
+          {/* Close / Hide Button */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Hide Context Panel (Ctrl+J)"
+              aria-label="Close Context Panel"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#64748b",
+                cursor: "pointer",
+                padding: "3px",
+                borderRadius: "3px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "color 0.12s ease, background 0.12s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "#f8fafc";
+                e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "#64748b";
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <X size={13} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -374,91 +401,74 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: "12px 14px",
+          padding: "10px 12px",
           display: "flex",
           flexDirection: "column",
-          gap: 16,
+          gap: 12,
         }}
       >
-        {/* 1. Live Agent Execution Card */}
-        <ModernCard
-          icon={<Activity size={13} style={{ color: isBusy ? "#34d399" : "#ef4444" }} />}
-          title="Agent Runtime"
-          badge={
-            agentState.status !== "idle" ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "10px", color: "var(--color-text-tertiary)" }}>
-                <Clock size={11} />
-                <span>{(agentState.elapsed_ms / 1000).toFixed(1)}s</span>
-              </div>
-            ) : null
-          }
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "11.5px", color: "var(--color-text-secondary)" }}>
-            {isBusy ? (
-              <Loader2 size={13} className="animate-spin" style={{ color: "#34d399", flexShrink: 0 }} />
-            ) : agentState.status === "completed" ? (
-              <CheckCircle2 size={13} style={{ color: "#3b82f6", flexShrink: 0 }} />
-            ) : (
-              <Circle size={13} style={{ color: "var(--color-text-tertiary)", flexShrink: 0 }} />
-            )}
-            <span style={{ fontWeight: 500 }}>
-              {agentState.status === "idle" && "Idle — waiting for command"}
-              {agentState.status === "planning" && "Formulating execution plan…"}
-              {agentState.status === "executing" &&
-                `Running step ${agentState.current_step_idx !== null ? agentState.current_step_idx + 1 : ""}…`}
-              {agentState.status === "verifying" && "Verifying outputs & syntax…"}
-              {agentState.status === "completed" && "Task executed successfully!"}
-            </span>
-          </div>
-        </ModernCard>
-
-        {/* 2. Objective Card */}
-        <ModernCard icon={<Target size={13} style={{ color: "#f59e0b" }} />} title="Objective">
+        {/* 1. Objective Card */}
+        <ModernCard icon={<Target size={12} style={{ color: "#94a3b8" }} />} title="Objective">
           <div
             style={{
-              fontSize: "12px",
+              fontSize: "11.5px",
               lineHeight: 1.45,
-              color: agentState.status !== "idle" ? "#ffffff" : "var(--color-text-tertiary)",
+              color: agentState.status !== "idle" ? "#f1f5f9" : "#64748b",
               fontWeight: agentState.status !== "idle" ? 500 : 400,
-              background: "rgba(255, 255, 255, 0.02)",
+              background: "#07080c",
               border: "1px solid rgba(255, 255, 255, 0.05)",
-              borderLeft: "2px solid #ef4444",
-              borderRadius: "4px 6px 6px 4px",
-              padding: "8px 10px",
+              borderLeft: agentState.status !== "idle" ? "2px solid #38bdf8" : "2px solid rgba(255, 255, 255, 0.1)",
+              borderRadius: "4px",
+              padding: "7px 9px",
               wordBreak: "break-word",
             }}
           >
-            {agentState.objective || "No active objective"}
+            {agentState.objective && agentState.objective !== "No active task"
+              ? agentState.objective
+              : "Ready for next instruction. No active agent task."}
           </div>
         </ModernCard>
 
-        {/* 3. Execution Plan Tasks Stepper */}
+        {/* 2. Execution Plan Stepper */}
         <ModernCard
-          icon={<Sparkles size={13} style={{ color: "#a855f7" }} />}
-          title="Plan Tasks"
+          icon={<Sparkles size={12} style={{ color: "#94a3b8" }} />}
+          title="Plan Steps"
           badge={
             agentState.plan_steps.length > 0 ? (
               <span
                 style={{
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  padding: "1px 6px",
-                  borderRadius: 8,
-                  background: "rgba(168, 85, 247, 0.15)",
-                  color: "#c084fc",
+                  fontSize: "9.5px",
+                  fontWeight: 600,
+                  padding: "1px 5px",
+                  borderRadius: 3,
+                  background: "rgba(255, 255, 255, 0.04)",
+                  border: "1px solid rgba(255, 255, 255, 0.07)",
+                  color: "#94a3b8",
+                  fontFamily: "var(--font-mono, monospace)",
                 }}
               >
-                {agentState.plan_steps.filter((s) => s.status === "completed").length} / {agentState.plan_steps.length}
+                {agentState.plan_steps.filter((s) => s.status === "completed").length}/{agentState.plan_steps.length}
               </span>
             ) : null
           }
         >
           {agentState.plan_steps.length === 0 ? (
-            <div style={{ color: "var(--color-text-tertiary)", fontSize: "11px", fontStyle: "italic", padding: "4px 0" }}>
+            <div style={{ color: "#64748b", fontSize: "11px", fontStyle: "italic", padding: "2px 0" }}>
               No execution plan loaded
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ position: "relative", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 8 }}>
+              {/* Connected vertical line */}
+              <div
+                style={{
+                  position: "absolute",
+                  left: 6,
+                  top: 4,
+                  bottom: 4,
+                  width: 1,
+                  background: "rgba(255, 255, 255, 0.08)",
+                }}
+              />
               {agentState.plan_steps.map((step, idx) => {
                 const isCurrent = step.status === "running";
                 const isDone = step.status === "completed";
@@ -467,39 +477,41 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
                   <div
                     key={idx}
                     style={{
+                      position: "relative",
                       display: "flex",
                       alignItems: "flex-start",
-                      gap: 8,
-                      padding: "6px 8px",
-                      borderRadius: 6,
-                      background: isCurrent
-                        ? "rgba(239, 68, 68, 0.08)"
-                        : isDone
-                        ? "rgba(16, 185, 129, 0.04)"
-                        : "rgba(255, 255, 255, 0.02)",
-                      border: isCurrent
-                        ? "1px solid rgba(239, 68, 68, 0.25)"
-                        : "1px solid rgba(255, 255, 255, 0.04)",
-                      transition: "all 0.15s ease",
+                      gap: 7,
+                      padding: "3px 6px",
+                      borderRadius: 4,
+                      background: isCurrent ? "rgba(56, 189, 248, 0.05)" : "transparent",
+                      border: isCurrent ? "1px solid rgba(56, 189, 248, 0.15)" : "1px solid transparent",
+                      transition: "all 0.12s ease",
                     }}
                   >
-                    {/* Stepper Indicator */}
-                    <div style={{ marginTop: 2, flexShrink: 0 }}>
-                      {isDone && <CheckCircle2 size={13} style={{ color: "#10b981" }} />}
-                      {isCurrent && <Loader2 size={13} className="animate-spin" style={{ color: "#ef4444" }} />}
-                      {!isDone && !isCurrent && <Circle size={13} style={{ color: "rgba(255, 255, 255, 0.2)" }} />}
+                    {/* Stepper Node Indicator */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: -18,
+                        top: 2,
+                        background: "#0a0b10",
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {isDone && <CheckCircle2 size={12} style={{ color: "#10b981" }} />}
+                      {isCurrent && <Loader2 size={12} className="animate-spin" style={{ color: "#38bdf8" }} />}
+                      {!isDone && !isCurrent && <Circle size={12} style={{ color: "#475569" }} />}
                     </div>
 
                     <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", flex: 1 }}>
                       <span
                         style={{
-                          fontSize: "11.5px",
-                          fontWeight: isCurrent ? 600 : 400,
-                          color: isDone
-                            ? "var(--color-text-tertiary)"
-                            : isCurrent
-                            ? "#ffffff"
-                            : "var(--color-text-secondary)",
+                          fontSize: "11px",
+                          fontWeight: isCurrent ? 500 : 400,
+                          color: isDone ? "#64748b" : isCurrent ? "#f8fafc" : "#cbd5e1",
                           lineHeight: 1.35,
                           wordBreak: "break-word",
                         }}
@@ -514,20 +526,22 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
           )}
         </ModernCard>
 
-        {/* 4. Memory Bank Card */}
+        {/* 3. Memory Bank Card */}
         <ModernCard
-          icon={<Brain size={13} style={{ color: "#38bdf8" }} />}
+          icon={<Brain size={12} style={{ color: "#94a3b8" }} />}
           title="Memory Bank"
           badge={
             memories.length > 0 ? (
               <span
                 style={{
-                  fontSize: "10px",
-                  fontWeight: 700,
+                  fontSize: "9.5px",
+                  fontWeight: 600,
                   padding: "1px 5px",
-                  borderRadius: 6,
-                  background: "rgba(56, 189, 248, 0.15)",
-                  color: "#38bdf8",
+                  borderRadius: 3,
+                  background: "rgba(255, 255, 255, 0.04)",
+                  border: "1px solid rgba(255, 255, 255, 0.07)",
+                  color: "#94a3b8",
+                  fontFamily: "var(--font-mono, monospace)",
                 }}
               >
                 {memories.length}
@@ -536,7 +550,7 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
           }
         >
           {/* Quick Add Memory Input */}
-          <form onSubmit={handleAddMemory} style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          <form onSubmit={handleAddMemory} style={{ display: "flex", gap: 5, marginBottom: 8 }}>
             <input
               type="text"
               placeholder="Add project guideline or rule…"
@@ -545,15 +559,15 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
               style={{
                 flex: 1,
                 fontSize: "11px",
-                padding: "5px 9px",
-                background: "rgba(0, 0, 0, 0.4)",
+                padding: "4px 8px",
+                background: "#07080c",
                 border: "1px solid rgba(255, 255, 255, 0.08)",
-                borderRadius: 5,
+                borderRadius: 4,
                 color: "#ffffff",
                 outline: "none",
-                transition: "border 0.15s ease",
+                transition: "border 0.12s ease",
               }}
-              onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.4)")}
+              onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(56, 189, 248, 0.4)")}
               onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.08)")}
             />
             <button
@@ -563,43 +577,43 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
                 display: "flex",
                 alignItems: "center",
                 gap: 4,
-                height: 26,
-                fontSize: "11px",
-                fontWeight: 600,
-                padding: "0 9px",
-                background: !newMemory.trim() ? "rgba(239, 68, 68, 0.2)" : "#ef4444",
-                color: "#ffffff",
-                border: "none",
-                borderRadius: 5,
+                height: 25,
+                fontSize: "10.5px",
+                fontWeight: 500,
+                padding: "0 8px",
+                background: !newMemory.trim() ? "rgba(255, 255, 255, 0.03)" : "rgba(255, 255, 255, 0.08)",
+                color: !newMemory.trim() ? "#64748b" : "#f8fafc",
+                border: "1px solid rgba(255, 255, 255, 0.08)",
+                borderRadius: 4,
                 cursor: !newMemory.trim() ? "not-allowed" : "pointer",
-                transition: "all 0.15s ease",
+                transition: "all 0.12s ease",
                 flexShrink: 0,
               }}
             >
-              <Plus size={12} />
+              <Plus size={11} />
               <span>Add</span>
             </button>
           </form>
 
           {memories.length === 0 ? (
-            <div style={{ color: "var(--color-text-tertiary)", fontSize: "11px", fontStyle: "italic", padding: "4px 0" }}>
-              No custom memories persisted yet.
+            <div style={{ color: "#64748b", fontSize: "11px", fontStyle: "italic", padding: "2px 0" }}>
+              No custom guidelines persisted.
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 180, overflowY: "auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 180, overflowY: "auto" }}>
               {memories.map((m) => (
                 <div
                   key={m.id}
                   style={{
                     position: "relative",
-                    background: "rgba(255, 255, 255, 0.02)",
+                    background: "#07080c",
                     border: "1px solid rgba(255, 255, 255, 0.05)",
-                    borderRadius: 6,
-                    padding: "7px 10px",
+                    borderRadius: 4,
+                    padding: "6px 8px",
                     display: "flex",
                     flexDirection: "column",
-                    gap: 4,
-                    transition: "all 0.15s ease",
+                    gap: 3,
+                    transition: "all 0.12s ease",
                   }}
                   className="memory-item-hover"
                 >
@@ -607,12 +621,14 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
                     <span
                       style={{
                         fontSize: "9px",
-                        fontWeight: 700,
+                        fontWeight: 600,
                         padding: "1px 5px",
-                        borderRadius: 4,
-                        background: "rgba(56, 189, 248, 0.12)",
-                        color: "#38bdf8",
+                        borderRadius: 3,
+                        background: "rgba(255, 255, 255, 0.04)",
+                        border: "1px solid rgba(255, 255, 255, 0.06)",
+                        color: "#94a3b8",
                         textTransform: "uppercase",
+                        letterSpacing: "0.04em",
                       }}
                     >
                       {m.category || "Guideline"}
@@ -622,18 +638,21 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
                       style={{
                         background: "transparent",
                         border: "none",
-                        color: "var(--color-text-tertiary)",
+                        color: "#64748b",
                         cursor: "pointer",
                         padding: 2,
                         display: "flex",
                         alignItems: "center",
+                        transition: "color 0.12s ease",
                       }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = "#f87171")}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = "#64748b")}
                       title="Delete rule"
                     >
                       <Trash2 size={11} />
                     </button>
                   </div>
-                  <div style={{ color: "var(--color-text-primary)", fontSize: "11.5px", lineHeight: 1.35 }}>
+                  <div style={{ color: "#cbd5e1", fontSize: "11px", lineHeight: 1.35 }}>
                     {m.summary}
                   </div>
                 </div>
@@ -642,17 +661,17 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
           )}
         </ModernCard>
 
-        {/* 5. Project Index Card */}
-        <ModernCard icon={<Database size={13} style={{ color: "#10b981" }} />} title="Project Truth Index">
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {/* 4. Project Truth Index */}
+        <ModernCard icon={<Database size={12} style={{ color: "#94a3b8" }} />} title="Project Index">
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                <FolderGit2 size={13} style={{ color: "var(--color-text-tertiary)", flexShrink: 0 }} />
+                <FolderGit2 size={12} style={{ color: "#64748b", flexShrink: 0 }} />
                 <span
                   style={{
-                    fontSize: "11.5px",
-                    fontWeight: 600,
-                    color: "#ffffff",
+                    fontSize: "11px",
+                    fontWeight: 500,
+                    color: "#cbd5e1",
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -692,15 +711,25 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
                   alignItems: "center",
                   gap: 4,
                   fontSize: "10.5px",
-                  fontWeight: 600,
-                  padding: "3px 8px",
-                  background: "rgba(239, 68, 68, 0.12)",
-                  border: "1px solid rgba(239, 68, 68, 0.3)",
-                  borderRadius: 5,
-                  color: "#f87171",
+                  fontWeight: 500,
+                  padding: "2px 7px",
+                  background: "rgba(255, 255, 255, 0.04)",
+                  border: "1px solid rgba(255, 255, 255, 0.08)",
+                  borderRadius: 4,
+                  color: "#cbd5e1",
                   cursor: indexingInProgress || !activeProject ? "not-allowed" : "pointer",
-                  transition: "all 0.15s ease",
+                  transition: "all 0.12s ease",
                   flexShrink: 0,
+                }}
+                onMouseEnter={(e) => {
+                  if (!indexingInProgress && activeProject) {
+                    e.currentTarget.style.background = "rgba(255, 255, 255, 0.08)";
+                    e.currentTarget.style.color = "#f8fafc";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.04)";
+                  e.currentTarget.style.color = "#cbd5e1";
                 }}
               >
                 <RefreshCw size={10} className={indexingInProgress ? "animate-spin" : ""} />
@@ -710,13 +739,14 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
 
             <div
               style={{
-                fontSize: "11px",
-                color: "var(--color-text-tertiary)",
+                fontSize: "10.5px",
+                fontFamily: "var(--font-mono, monospace)",
+                color: "#94a3b8",
                 lineHeight: 1.4,
-                background: "rgba(0, 0, 0, 0.3)",
+                background: "#07080c",
                 padding: "6px 8px",
-                borderRadius: 5,
-                border: "1px solid rgba(255, 255, 255, 0.04)",
+                borderRadius: 4,
+                border: "1px solid rgba(255, 255, 255, 0.05)",
               }}
             >
               {indexMessage || (indexSummary ? indexSummary.split("\n")[0] : "AST symbols & workspace index ready.")}
@@ -724,7 +754,7 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
           </div>
         </ModernCard>
 
-        {/* 6. Files Changed Card */}
+        {/* 5. Files Changed Card */}
         {(() => {
           const combinedMap = new Map<string, { path: string; basename: string; dir: string; added: number; removed: number }>();
           if (numstat?.files) {
@@ -739,16 +769,16 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
 
           return (
             <ModernCard
-              icon={<FileCode size={13} style={{ color: "#ec4899" }} />}
-              title="Files Changed"
+              icon={<FileCode size={12} style={{ color: "#94a3b8" }} />}
+              title="File Changes"
               badge={
-                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "10.5px", fontFamily: "var(--font-mono)" }}>
-                  <span style={{ color: "#34d399", fontWeight: 700 }}>+{totalAdded}</span>
-                  <span style={{ color: "#f87171", fontWeight: 700 }}>-{totalRemoved}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "10px", fontFamily: "var(--font-mono, monospace)" }}>
+                  <span style={{ color: "#34d399", fontWeight: 600 }}>+{totalAdded}</span>
+                  <span style={{ color: "#f87171", fontWeight: 600 }}>-{totalRemoved}</span>
                 </div>
               }
             >
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                 {displayFiles.map((file, idx) => (
                   <div
                     key={idx}
@@ -757,30 +787,30 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      padding: "5px 8px",
-                      borderRadius: 5,
-                      background: "rgba(255, 255, 255, 0.02)",
+                      padding: "4px 7px",
+                      borderRadius: 4,
+                      background: "rgba(255, 255, 255, 0.015)",
                       border: "1px solid rgba(255, 255, 255, 0.04)",
                       cursor: "pointer",
                       transition: "all 0.12s ease",
                     }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255, 255, 255, 0.02)")}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255, 255, 255, 0.015)")}
                     title={file.path}
                   >
-                    <div style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden" }}>
-                      <FileCode size={12} style={{ color: "var(--color-text-tertiary)", flexShrink: 0 }} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                      <FileCode size={11} style={{ color: "#64748b", flexShrink: 0 }} />
                       <div style={{ display: "flex", alignItems: "baseline", gap: 5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        <span style={{ fontSize: "11.5px", color: "var(--color-text-primary)", fontWeight: 500 }}>
+                        <span style={{ fontSize: "11px", color: "#e2e8f0", fontWeight: 500 }}>
                           {file.basename}
                         </span>
-                        <span style={{ fontSize: "9.5px", color: "var(--color-text-tertiary)" }}>{file.dir}</span>
+                        <span style={{ fontSize: "9px", color: "#64748b" }}>{file.dir}</span>
                       </div>
                     </div>
 
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "10px", fontFamily: "var(--font-mono)", flexShrink: 0 }}>
-                      <span style={{ color: "#34d399", fontWeight: 600 }}>+{file.added}</span>
-                      <span style={{ color: "#f87171", fontWeight: 600 }}>-{file.removed}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "9.5px", fontFamily: "var(--font-mono, monospace)", flexShrink: 0 }}>
+                      <span style={{ color: "#34d399" }}>+{file.added}</span>
+                      <span style={{ color: "#f87171" }}>-{file.removed}</span>
                     </div>
                   </div>
                 ))}
@@ -793,29 +823,31 @@ export function RightPanel({ visible, onFileClick, activeProject, width }: Right
   );
 }
 
-/** Reusable modern glassmorphic card container */
+/** Reusable modern precision card container */
 function ModernCard({
   icon,
   title,
   badge,
   children,
+  isLight = false,
 }: {
   icon: React.ReactNode;
   title: string;
   badge?: React.ReactNode;
   children: React.ReactNode;
+  isLight?: boolean;
 }) {
   return (
     <div
       style={{
-        background: "rgba(255, 255, 255, 0.025)",
-        border: "1px solid rgba(255, 255, 255, 0.06)",
-        borderRadius: 8,
-        padding: "10px 12px",
+        background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)",
+        border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.05)",
+        borderRadius: 6,
+        padding: "8px 10px",
         display: "flex",
         flexDirection: "column",
-        gap: 8,
-        transition: "all 0.15s ease",
+        gap: 7,
+        transition: "all 0.12s ease",
       }}
     >
       {/* Card Header */}
@@ -824,10 +856,10 @@ function ModernCard({
           {icon}
           <span
             style={{
-              fontSize: "11px",
-              fontWeight: 700,
-              letterSpacing: "0.5px",
-              color: "var(--color-text-tertiary)",
+              fontSize: "10px",
+              fontWeight: 600,
+              letterSpacing: "0.06em",
+              color: isLight ? "#475569" : "#94a3b8",
               textTransform: "uppercase",
             }}
           >

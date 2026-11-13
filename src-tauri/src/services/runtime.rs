@@ -12,7 +12,10 @@ pub fn ingest_log(log_line: &str) {
         let tokens: Vec<&str> = log_line.split_whitespace().collect();
         for token in tokens {
             if token.contains(".rs:") || token.contains(".ts:") || token.contains(".js:") {
-                let mut exceptions = ACTIVE_EXCEPTIONS.write().unwrap();
+                let mut exceptions = match ACTIVE_EXCEPTIONS.write() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 let warning = format!("RUNTIME EXCEPTION: Found error in log traced to `{}` - Context: {}", token, log_line);
                 if !exceptions.contains(&warning) {
                     exceptions.push(warning);
@@ -27,6 +30,9 @@ pub fn ingest_log(log_line: &str) {
 }
 
 pub fn get_runtime_warnings() -> Vec<String> {
-    let exceptions = ACTIVE_EXCEPTIONS.read().unwrap();
+    let exceptions = match ACTIVE_EXCEPTIONS.read() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     exceptions.clone()
 }

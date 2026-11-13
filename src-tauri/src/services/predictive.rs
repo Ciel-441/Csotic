@@ -17,7 +17,7 @@ pub fn analyze_codebase(db: &Mutex<Connection>, active_files: &[String], project
         // 2. Forgotten Tests Check
         // Simple heuristic: if it's a src file, check if a test file exists.
         if file.starts_with("src/") && (file.ends_with(".rs") || file.ends_with(".ts") || file.ends_with(".js")) {
-            let file_name = Path::new(file).file_name().unwrap().to_string_lossy();
+            let file_name = Path::new(file).file_name().unwrap_or_default().to_string_lossy();
             let base_name = file_name.trim_end_matches(".rs").trim_end_matches(".ts").trim_end_matches(".js");
             
             // Check rust standard tests directory or sibling test files

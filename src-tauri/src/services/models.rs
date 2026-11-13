@@ -17,18 +17,67 @@ fn get_device_salt() -> Vec<u8> {
     crate::services::filesystem::compute_sha256(&raw).into_bytes()
 }
 
+/// Windows DPAPI: real encryption keyed to the logged-in Windows account. Another user, another
+/// machine, or a copied auth.json / forge.db cannot decrypt it (unlike the old XOR "enc_v1").
+#[cfg(windows)]
+mod dpapi {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{
+        CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
+
+    fn run(input: &[u8], protect: bool) -> Option<Vec<u8>> {
+        let in_blob = CRYPT_INTEGER_BLOB { cbData: input.len() as u32, pbData: input.as_ptr() as *mut u8 };
+        let mut out_blob = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+        // SAFETY: in_blob points at `input` for the duration of the call; on success the OS
+        // allocates out_blob.pbData with LocalAlloc, which we copy and then LocalFree exactly once.
+        unsafe {
+            let ok = if protect {
+                CryptProtectData(&in_blob, std::ptr::null(), std::ptr::null(), std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out_blob)
+            } else {
+                CryptUnprotectData(&in_blob, std::ptr::null_mut(), std::ptr::null(), std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out_blob)
+            };
+            if ok == 0 || out_blob.pbData.is_null() {
+                return None;
+            }
+            let bytes = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
+            LocalFree(out_blob.pbData as _);
+            Some(bytes)
+        }
+    }
+
+    pub fn protect(data: &[u8]) -> Option<Vec<u8>> {
+        run(data, true)
+    }
+
+    pub fn unprotect(data: &[u8]) -> Option<Vec<u8>> {
+        run(data, false)
+    }
+}
+
 pub fn encode_secret(key: &str) -> String {
     if key.trim().is_empty() {
         return String::new();
     }
+    use base64::Engine;
+    #[cfg(windows)]
+    if let Some(sealed) = dpapi::protect(key.as_bytes()) {
+        return format!("enc_v2:{}", base64::engine::general_purpose::STANDARD.encode(sealed));
+    }
+    // ponytail: non-Windows still uses device-salted XOR (obfuscation, not encryption);
+    // switch to the OS keychain (keyring crate) when Linux/macOS builds ship.
     let salt = get_device_salt();
     let key_bytes = key.as_bytes();
     let mut obfuscated = Vec::with_capacity(key_bytes.len());
     for (i, &b) in key_bytes.iter().enumerate() {
         obfuscated.push(b ^ salt[i % salt.len()]);
     }
-    use base64::Engine;
     format!("enc_v1:{}", base64::engine::general_purpose::STANDARD.encode(&obfuscated))
+}
+
+/// True when a stored secret should be re-saved with the current (stronger) format.
+pub fn needs_reencode(stored: &str) -> bool {
+    cfg!(windows) && !stored.trim().is_empty() && !stored.trim().starts_with("enc_v2:")
 }
 
 pub fn decode_secret(stored: &str) -> String {
@@ -37,6 +86,13 @@ pub fn decode_secret(stored: &str) -> String {
         return String::new();
     }
     use base64::Engine;
+    #[cfg(windows)]
+    if let Some(enc_payload) = trimmed.strip_prefix("enc_v2:") {
+        return base64::engine::general_purpose::STANDARD.decode(enc_payload).ok()
+            .and_then(|bytes| dpapi::unprotect(&bytes))
+            .and_then(|plain| String::from_utf8(plain).ok())
+            .unwrap_or_default();
+    }
     if let Some(enc_payload) = trimmed.strip_prefix("enc_v1:") {
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(enc_payload) {
             let salt = get_device_salt();
@@ -68,20 +124,31 @@ pub fn mask_for_display(key: &str) -> String {
     if trimmed.is_empty() {
         return String::new();
     }
-    if trimmed.len() <= 8 {
+    // Char-based, not byte slicing: a non-ASCII key must not panic (release builds abort on panic).
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= 8 {
         return "••••••••".to_string();
     }
-    let prefix = &trimmed[..4.min(trimmed.len())];
-    let suffix = &trimmed[trimmed.len().saturating_sub(4)..];
+    let prefix: String = chars[..4].iter().collect();
+    let suffix: String = chars[chars.len() - 4..].iter().collect();
     format!("{}••••••••{}", prefix, suffix)
 }
 
 pub fn get_api_key(db: &Mutex<Connection>, provider: &str) -> Option<String> {
-    let conn = db.lock().ok()?;
-    let mut stmt = conn.prepare("SELECT key_value FROM api_keys WHERE provider = ?1").ok()?;
-    let stored: String = stmt.query_row(rusqlite::params![provider], |row| row.get(0)).ok()?;
+    let stored: String = {
+        let conn = db.lock().ok()?;
+        conn.query_row("SELECT key_value FROM api_keys WHERE provider = ?1", rusqlite::params![provider], |row| row.get(0)).ok()?
+    };
     let key = decode_secret(&stored);
-    if key.trim().is_empty() { None } else { Some(key.trim().to_string()) }
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    // Upgrade keys saved in an older, weaker format (lock is released above, so no deadlock).
+    if needs_reencode(&stored) {
+        let _ = save_api_key(db, provider, key);
+    }
+    Some(key.to_string())
 }
 
 pub fn save_api_key(db: &Mutex<Connection>, provider: &str, key: &str) -> Result<(), String> {
@@ -224,14 +291,12 @@ pub async fn handle(action: &str, payload: &serde_json::Value, app: &AppHandle, 
             let has_openrouter_key = openrouter_key.is_some();
             let mut existing_ids = std::collections::HashSet::new();
 
-            // Try live fetch (with key or public catalog)
+            // Live fetch only if API key is present; otherwise use the instant built-in static catalog
             let mut live_models = Vec::new();
             if let Some(ref api_key) = openrouter_key {
                 if let Ok(fetched) = fetch_openrouter_models(api_key).await {
                     live_models = fetched;
                 }
-            } else if let Ok(fetched) = fetch_openrouter_models("").await {
-                live_models = fetched;
             }
 
             if !live_models.is_empty() {
@@ -331,13 +396,9 @@ pub async fn handle(action: &str, payload: &serde_json::Value, app: &AppHandle, 
             let has_gemini_key = gemini_key.is_some();
 
             let groq_key = get_api_key(db, "groq");
-            let has_groq_key = groq_key.is_some();
 
             let openai_key = get_api_key(db, "openai");
-            let has_openai_key = openai_key.is_some();
-
             let anthropic_key = get_api_key(db, "anthropic");
-            let has_anthropic_key = anthropic_key.is_some();
 
             let deepseek_key = get_api_key(db, "deepseek");
             let has_deepseek_key = deepseek_key.is_some();
@@ -1077,8 +1138,9 @@ async fn stream_openai_compat(
     }
 
     let mut candidate_models = vec![model.to_string()];
-    // Only configure free fallbacks if the requested model is an openrouter auto free or free-tier model
-    if base_url.contains("openrouter") && (model.ends_with(":free") || model == "openrouter/free") {
+    // Configure free fallbacks: if the requested model is an OpenRouter free-tier model
+    // (ends with :free, is the auto-router, or is a live-fetched free model that returned 404/429)
+    if base_url.contains("openrouter") {
         for fallback in &[
             "meta-llama/llama-3.3-70b-instruct:free",
             "deepseek/deepseek-chat:free",
@@ -1152,11 +1214,7 @@ async fn stream_openai_compat(
                         .and_then(|e| {
                             if let Some(msg) = e.get("message").and_then(|m| m.as_str()) {
                                 Some(msg.to_string())
-                            } else if let Some(s) = e.as_str() {
-                                Some(s.to_string())
-                            } else {
-                                None
-                            }
+                            } else { e.as_str().map(|s| s.to_string()) }
                         })
                         .or_else(|| parsed.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
                 })
@@ -1168,8 +1226,8 @@ async fn stream_openai_compat(
                 format!("⚠️ API error ({status}): {clean_json_msg}")
             };
 
-            // If we have more free candidates on rate limits, retry with the next candidate
-            if (status.as_u16() == 429 || status.as_u16() == 503) && attempt_idx + 1 < candidate_models.len() {
+            // If we have more candidates on retryable errors, try the next one
+            if (status.as_u16() == 404 || status.as_u16() == 429 || status.as_u16() == 503) && attempt_idx + 1 < candidate_models.len() {
                 continue;
             }
 
@@ -1372,8 +1430,7 @@ async fn stream_anthropic(
                     let line = buffer[..pos].trim().to_string();
                     buffer = buffer[pos + 1..].to_string();
 
-                    if line.starts_with("data: ") {
-                        let data = &line[6..];
+                    if let Some(data) = line.strip_prefix("data: ") {
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
                             if json["type"] == "content_block_delta" {
                                 if let Some(text_delta) = json["delta"]["text"].as_str() {

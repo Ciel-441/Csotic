@@ -8,9 +8,7 @@ import {
   PanelLeft, 
   Bot, 
   Sliders, 
-  Columns,
   Sparkles,
-  FilePlus2,
   Sun,
   Moon,
   Hammer,
@@ -18,14 +16,17 @@ import {
   X,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { terminal, windowService } from "../services/ipc";
-import { ModelSelectorDropdown } from "./ModelSelectorDropdown";
+import { windowService } from "../services/ipc";
+import { CsoticLogoIcon } from "./WelcomeView";
+import { getSmartTaskActions, runTask } from "../services/runTasks";
+import { runEditorCommand } from "./editor/activeEditor";
 
 interface TopBarProps {
   activeProject: ProjectInfo | null;
   activeFile?: string | null;
   onToggleSidebar: () => void;
   onToggleRightPanel: () => void;
+  rightPanelVisible?: boolean;
   onToggleBottomDock: () => void;
   onOpenTerminal?: () => void;
   onOpenSearch: () => void;
@@ -48,151 +49,8 @@ interface TopBarProps {
   onNewFile?: () => void;
   theme?: "dark" | "light";
   onToggleTheme?: () => void;
-}
-
-function sanitizeArg(name: string): string {
-  if (name.includes(" ")) {
-    return `"${name}"`;
-  }
-  return name;
-}
-
-function getSmartTaskActions(activeFile?: string | null, _activeProject?: ProjectInfo | null) {
-  if (!activeFile) {
-    return {
-      runLabel: "Dev",
-      runCmd: "npm run dev",
-      runTitle: "Run Dev Server (npm run dev)",
-      buildLabel: "Build",
-      buildCmd: "npm run build",
-      buildTitle: "Build Project (npm run build)",
-      hasBuild: true,
-    };
-  }
-
-  const cleanPath = activeFile.replace(/\\/g, "/");
-  const fileName = cleanPath.split("/").pop() || "";
-  const ext = fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")).toLowerCase() : "";
-  const baseName = fileName.replace(/\.[^/.]+$/, "");
-  const fileArg = sanitizeArg(fileName);
-  const outArg = sanitizeArg(`${baseName}.exe`);
-
-  switch (ext) {
-    case ".c":
-      return {
-        runLabel: `Run`,
-        runCmd: `gcc ${fileArg} -o ${outArg} && ${outArg}`,
-        runTitle: `Compile & Run ${fileName} (gcc ${fileArg} -o ${outArg} && ${outArg})`,
-        buildLabel: `Build`,
-        buildCmd: `gcc ${fileArg} -o ${outArg}`,
-        buildTitle: `Compile ${fileName} (gcc ${fileArg} -o ${outArg})`,
-        hasBuild: true,
-      };
-    case ".cpp":
-    case ".cc":
-    case ".cxx":
-      return {
-        runLabel: `Run`,
-        runCmd: `g++ ${fileArg} -o ${outArg} && ${outArg}`,
-        runTitle: `Compile & Run ${fileName} (g++ ${fileArg} -o ${outArg} && ${outArg})`,
-        buildLabel: `Build`,
-        buildCmd: `g++ ${fileArg} -o ${outArg}`,
-        buildTitle: `Compile ${fileName} (g++ ${fileArg} -o ${outArg})`,
-        hasBuild: true,
-      };
-    case ".py":
-      return {
-        runLabel: `Run`,
-        runCmd: `python ${fileArg}`,
-        runTitle: `Run Python Script (python ${fileArg})`,
-        buildLabel: `Build`,
-        buildCmd: `python -m py_compile ${fileArg}`,
-        buildTitle: `Bytecode Compile ${fileArg}`,
-        hasBuild: false,
-      };
-    case ".rs":
-      return {
-        runLabel: `Run`,
-        runCmd: `cargo run`,
-        runTitle: `Run Rust (cargo run)`,
-        buildLabel: `Build`,
-        buildCmd: `cargo build`,
-        buildTitle: `Build Rust (cargo build)`,
-        hasBuild: true,
-      };
-    case ".go":
-      return {
-        runLabel: `Run`,
-        runCmd: `go run ${fileArg}`,
-        runTitle: `Run Go file (go run ${fileArg})`,
-        buildLabel: `Build`,
-        buildCmd: `go build ${fileArg}`,
-        buildTitle: `Build Go binary (go build ${fileArg})`,
-        hasBuild: true,
-      };
-    case ".java":
-      return {
-        runLabel: `Run`,
-        runCmd: `java ${fileArg}`,
-        runTitle: `Run Java class (java ${fileArg})`,
-        buildLabel: `Build`,
-        buildCmd: `javac ${fileArg}`,
-        buildTitle: `Compile Java (javac ${fileArg})`,
-        hasBuild: true,
-      };
-    case ".js":
-    case ".mjs":
-    case ".cjs":
-      return {
-        runLabel: `Run`,
-        runCmd: `node ${fileArg}`,
-        runTitle: `Run JavaScript with Node (node ${fileArg})`,
-        buildLabel: `Build`,
-        buildCmd: `npm run build`,
-        buildTitle: `Build Project (npm run build)`,
-        hasBuild: true,
-      };
-    case ".ts":
-      return {
-        runLabel: `Run`,
-        runCmd: `npx tsx ${fileArg}`,
-        runTitle: `Run TypeScript file (npx tsx ${fileArg})`,
-        buildLabel: `Build`,
-        buildCmd: `npm run build`,
-        buildTitle: `Build Project (npm run build)`,
-        hasBuild: true,
-      };
-    case ".sh":
-      return {
-        runLabel: `Run`,
-        runCmd: `bash ${fileArg}`,
-        runTitle: `Run Shell Script (bash ${fileArg})`,
-        buildLabel: `Build`,
-        buildCmd: ``,
-        buildTitle: ``,
-        hasBuild: false,
-      };
-    case ".ps1":
-      return {
-        runLabel: `Run`,
-        runCmd: `powershell -ExecutionPolicy Bypass -File ${fileArg}`,
-        runTitle: `Run PowerShell Script`,
-        buildLabel: `Build`,
-        buildCmd: ``,
-        buildTitle: ``,
-        hasBuild: false,
-      };
-    default:
-      return {
-        runLabel: "Dev",
-        runCmd: "npm run dev",
-        runTitle: "Run Dev Server (npm run dev)",
-        buildLabel: "Build",
-        buildCmd: "npm run build",
-        buildTitle: "Build Project (npm run build)",
-        hasBuild: true,
-      };
-  }
+  onOpenWelcomeTab?: () => void;
+  onOpenShortcuts?: () => void;
 }
 
 export function TopBar({
@@ -200,8 +58,9 @@ export function TopBar({
   activeFile,
   onToggleSidebar,
   onToggleRightPanel,
+  rightPanelVisible = false,
   onToggleBottomDock,
-  onOpenTerminal,
+  onOpenTerminal: _onOpenTerminal,
   onOpenSearch,
   onOpenCommandPalette,
   onOpenFolder,
@@ -212,23 +71,24 @@ export function TopBar({
   onCloseFile,
   onCloseProject,
   onToggleSplit,
-  isSplit = false,
-  activeModel,
-  modelsList = [],
-  onSelectModel,
+  isSplit: _isSplit = false,
+  activeModel: _activeModel,
+  modelsList: _modelsList = [],
+  onSelectModel: _onSelectModel,
   onOpenSettings,
   onToggleAiSlide,
   aiSlideVisible = false,
   onNewFile,
   theme = "dark",
   onToggleTheme,
+  onOpenWelcomeTab,
+  onOpenShortcuts,
 }: TopBarProps) {
-  const [isRunning, setIsRunning] = useState(false);
-  const [activeTaskName, setActiveTaskName] = useState<string | null>(null);
-  const [openMenu, setOpenMenu] = useState<"file" | "edit" | "view" | "terminal" | null>(null);
+  const isLight = theme === "light";
+  const [openMenu, setOpenMenu] = useState<"file" | "edit" | "selection" | "view" | "go" | "run" | "terminal" | "help" | null>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
 
-  const smartTask = getSmartTaskActions(activeFile, activeProject);
+  const smartTask = getSmartTaskActions(activeFile);
 
   // Close menus on outside click
   useEffect(() => {
@@ -240,24 +100,6 @@ export function TopBar({
     window.addEventListener("mousedown", handleOutsideClick);
     return () => window.removeEventListener("mousedown", handleOutsideClick);
   }, []);
-
-  const handleRunCommand = async (command: string, taskName: string) => {
-    const cwd = activeProject?.path || ".";
-    // Always open terminal, never toggle closed
-    if (onOpenTerminal) {
-      onOpenTerminal();
-    }
-    setIsRunning(true);
-    setActiveTaskName(taskName);
-    try {
-      await terminal.executeCommand(cwd, command, true);
-    } catch (err) {
-      console.error(`Execution failed for ${command}:`, err);
-    } finally {
-      setIsRunning(false);
-      setActiveTaskName(null);
-    }
-  };
 
   const menuItemStyle: React.CSSProperties = {
     display: "flex",
@@ -272,7 +114,9 @@ export function TopBar({
     width: "100%",
     cursor: "pointer",
     textAlign: "left",
-    gap: 16,
+    whiteSpace: "nowrap",
+    gap: 24,
+    boxSizing: "border-box",
   };
 
   const shortcutStyle: React.CSSProperties = {
@@ -280,24 +124,27 @@ export function TopBar({
     color: "var(--color-text-tertiary)",
     marginLeft: "auto",
     fontFamily: "var(--font-mono, monospace)",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   };
 
   const dropdownStyle: React.CSSProperties = {
     position: "absolute",
     top: "calc(100% + 4px)",
     left: 0,
-    background: "rgba(18, 4, 8, 0.98)",
-    backdropFilter: "blur(20px)",
-    WebkitBackdropFilter: "blur(20px)",
-    border: "1px solid rgba(239, 68, 68, 0.35)",
+    background: isLight ? "#ffffff" : "#202024",
+    border: isLight ? "1px solid #e2e8f0" : "1px solid #2e2e34",
     borderRadius: "var(--radius-md)",
-    boxShadow: "0 16px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(239, 68, 68, 0.2)",
-    minWidth: 200,
+    boxShadow: isLight ? "0 8px 24px rgba(0, 0, 0, 0.12)" : "0 8px 24px rgba(0, 0, 0, 0.5)",
+    minWidth: 240,
+    width: "max-content",
+    maxWidth: 340,
     padding: "5px",
     zIndex: 99999,
     display: "flex",
     flexDirection: "column",
     gap: 2,
+    boxSizing: "border-box",
   };
 
   const menuBtnStyle = (menuName: string): React.CSSProperties => ({
@@ -371,7 +218,6 @@ export function TopBar({
         overflow: "visible",
         background: "var(--color-topbar-bg)",
         borderBottom: "1px solid var(--color-border-default)",
-        backdropFilter: "blur(12px)",
         userSelect: "none",
         zIndex: 1000,
       }}
@@ -391,26 +237,43 @@ export function TopBar({
           <PanelLeft size={16} />
         </button>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 7, userSelect: "none" }}>
-          <img
-            src="/forge-logo.png"
-            alt="Csotic Logo"
-            style={{
-              width: 22,
-              height: 22,
-              borderRadius: "4px",
-              objectFit: "cover",
-              boxShadow: "0 0 10px rgba(239, 68, 68, 0.4)",
-              border: "1px solid rgba(239, 68, 68, 0.4)",
-              display: "block",
-            }}
-          />
-          <span style={{ fontWeight: 800, fontSize: "13.5px", letterSpacing: "1px", color: "var(--color-text-primary)", fontFamily: "var(--font-heading, sans-serif)" }}>
-            CSOTIC
-          </span>
-          <span style={{ fontSize: "9.5px", padding: "1px 5px", background: "rgba(239, 68, 68, 0.18)", color: "#f87171", borderRadius: 3, fontWeight: 700, border: "1px solid rgba(239, 68, 68, 0.35)", letterSpacing: "0.5px" }}>
-            IDE
-          </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, userSelect: "none" }}>
+          <CsoticLogoIcon size={19} />
+          {activeFile && activeFile !== "csotic://welcome" && !activeFile.startsWith("untitled://") && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                background: "rgba(255, 255, 255, 0.04)",
+                border: "1px solid rgba(255, 255, 255, 0.09)",
+                borderRadius: 6,
+                padding: 1,
+                gap: 2,
+              }}
+            >
+              <button
+                className="topbar__run-btn"
+                onClick={() => runTask("run", activeFile, activeProject?.path)}
+                title={smartTask.runTitle}
+                aria-label={smartTask.runTitle}
+                style={{ width: 24, height: 24, padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <Play size={11} fill="#34d399" style={{ color: "#34d399" }} />
+              </button>
+
+              {smartTask.hasBuild && (
+                <button
+                  className="topbar__run-btn"
+                  onClick={() => runTask("build", activeFile, activeProject?.path)}
+                  title={smartTask.buildTitle}
+                  aria-label={smartTask.buildTitle}
+                  style={{ width: 24, height: 24, padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <Hammer size={11} style={{ color: "#f87171" }} />
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ width: 1, height: 18, background: "var(--color-border-subtle)", margin: "0 4px" }} />
@@ -529,6 +392,82 @@ export function TopBar({
                 <button
                   style={menuItemStyle}
                   className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runEditorCommand("undo"); }}
+                >
+                  <span>Undo</span>
+                  <span style={shortcutStyle}>Ctrl+Z</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runEditorCommand("redo"); }}
+                >
+                  <span>Redo</span>
+                  <span style={shortcutStyle}>Ctrl+Y</span>
+                </button>
+                <div style={{ height: 1, background: "var(--color-border-subtle)", margin: "3px 0" }} />
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runEditorCommand("editor.action.clipboardCutAction"); }}
+                >
+                  <span>Cut</span>
+                  <span style={shortcutStyle}>Ctrl+X</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runEditorCommand("editor.action.clipboardCopyAction"); }}
+                >
+                  <span>Copy</span>
+                  <span style={shortcutStyle}>Ctrl+C</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runEditorCommand("editor.action.clipboardPasteAction"); }}
+                >
+                  <span>Paste</span>
+                  <span style={shortcutStyle}>Ctrl+V</span>
+                </button>
+                <div style={{ height: 1, background: "var(--color-border-subtle)", margin: "3px 0" }} />
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runEditorCommand("actions.find"); }}
+                >
+                  <span>Find</span>
+                  <span style={shortcutStyle}>Ctrl+F</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runEditorCommand("editor.action.startFindReplaceAction"); }}
+                >
+                  <span>Replace</span>
+                  <span style={shortcutStyle}>Ctrl+H</span>
+                </button>
+                <div style={{ height: 1, background: "var(--color-border-subtle)", margin: "3px 0" }} />
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runEditorCommand("editor.action.commentLine"); }}
+                >
+                  <span>Toggle Line Comment</span>
+                  <span style={shortcutStyle}>Ctrl+/</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runEditorCommand("editor.action.formatDocument"); }}
+                >
+                  <span>Format Document</span>
+                  <span style={shortcutStyle}>Shift+Alt+F</span>
+                </button>
+                <div style={{ height: 1, background: "var(--color-border-subtle)", margin: "3px 0" }} />
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
                   onClick={() => { setOpenMenu(null); onOpenSearch(); }}
                 >
                   <span>Quick Open File</span>
@@ -549,6 +488,138 @@ export function TopBar({
                 >
                   <span>Toggle AI Coder Slide</span>
                   <span style={shortcutStyle}>Ctrl+L</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* SELECTION MENU */}
+          <div style={{ position: "relative" }}>
+            <button
+              style={menuBtnStyle("selection")}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenMenu(openMenu === "selection" ? null : "selection");
+              }}
+              onMouseEnter={() => openMenu && setOpenMenu("selection")}
+            >
+              Selection
+            </button>
+            {openMenu === "selection" && (
+              <div style={dropdownStyle} className="animate-pop-in">
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    runEditorCommand("editor.action.selectAll");
+                  }}
+                >
+                  <span>Select All</span>
+                  <span style={shortcutStyle}>Ctrl+A</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    runEditorCommand("editor.action.smartSelect.expand");
+                  }}
+                >
+                  <span>Expand Selection</span>
+                  <span style={shortcutStyle}>Shift+Alt+Right</span>
+                </button>
+                <div style={{ height: 1, background: "var(--color-border-subtle)", margin: "3px 0" }} />
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    runEditorCommand("editor.action.copyLinesUpAction");
+                  }}
+                >
+                  <span>Copy Line Up</span>
+                  <span style={shortcutStyle}>Shift+Alt+Up</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    runEditorCommand("editor.action.copyLinesDownAction");
+                  }}
+                >
+                  <span>Copy Line Down</span>
+                  <span style={shortcutStyle}>Shift+Alt+Down</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    runEditorCommand("editor.action.moveLinesUpAction");
+                  }}
+                >
+                  <span>Move Line Up</span>
+                  <span style={shortcutStyle}>Alt+Up</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    runEditorCommand("editor.action.moveLinesDownAction");
+                  }}
+                >
+                  <span>Move Line Down</span>
+                  <span style={shortcutStyle}>Alt+Down</span>
+                </button>
+                <div style={{ height: 1, background: "var(--color-border-subtle)", margin: "3px 0" }} />
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    runEditorCommand("editor.action.addSelectionToNextFindMatch");
+                  }}
+                >
+                  <span>Add Next Occurrence</span>
+                  <span style={shortcutStyle}>Ctrl+D</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    runEditorCommand("editor.action.insertCursorAbove");
+                  }}
+                >
+                  <span>Add Cursor Above</span>
+                  <span style={shortcutStyle}>Ctrl+Alt+Up</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    runEditorCommand("editor.action.insertCursorBelow");
+                  }}
+                >
+                  <span>Add Cursor Below</span>
+                  <span style={shortcutStyle}>Ctrl+Alt+Down</span>
+                </button>
+                <div style={{ height: 1, background: "var(--color-border-subtle)", margin: "3px 0" }} />
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    onToggleSplit?.();
+                  }}
+                >
+                  <span>Split Editor</span>
+                  <span style={shortcutStyle}>Ctrl+\</span>
                 </button>
               </div>
             )}
@@ -593,19 +664,99 @@ export function TopBar({
                   <span>Toggle Split Editor</span>
                   <span style={shortcutStyle}>Ctrl+\</span>
                 </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); onToggleRightPanel(); }}
+                >
+                  <span>Toggle Context Panel</span>
+                  <span style={shortcutStyle}>Ctrl+J</span>
+                </button>
                 <div style={{ height: 1, background: "var(--color-border-subtle)", margin: "3px 0" }} />
                 <button
                   style={menuItemStyle}
                   className="dropdown-item"
                   onClick={() => { setOpenMenu(null); onOpenSettings?.(); }}
                 >
-                  <span>Settings & API Keys</span>
+                  <span>Settings &amp; API Keys</span>
                 </button>
               </div>
             )}
           </div>
 
-          {/* TERMINAL / RUN MENU */}
+          {/* GO MENU */}
+          <div style={{ position: "relative" }}>
+            <button
+              style={menuBtnStyle("go")}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenMenu(openMenu === "go" ? null : "go");
+              }}
+              onMouseEnter={() => openMenu && setOpenMenu("go")}
+            >
+              Go
+            </button>
+            {openMenu === "go" && (
+              <div style={dropdownStyle} className="animate-pop-in">
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); onOpenSearch(); }}
+                >
+                  <span>Go to File...</span>
+                  <span style={shortcutStyle}>Ctrl+P</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); onOpenCommandPalette?.(); }}
+                >
+                  <span>Command Palette...</span>
+                  <span style={shortcutStyle}>Ctrl+Shift+P</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* RUN MENU */}
+          <div style={{ position: "relative" }}>
+            <button
+              style={menuBtnStyle("run")}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenMenu(openMenu === "run" ? null : "run");
+              }}
+              onMouseEnter={() => openMenu && setOpenMenu("run")}
+            >
+              Run
+            </button>
+            {openMenu === "run" && (
+              <div style={dropdownStyle} className="animate-pop-in">
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); runTask("run", activeFile, activeProject?.path); }}
+                >
+                  <span>Run Without Debugging</span>
+                  <span style={shortcutStyle}>Ctrl+F5</span>
+                </button>
+                {smartTask.hasBuild && (
+                  <button
+                    style={menuItemStyle}
+                    className="dropdown-item"
+                    onClick={() => { setOpenMenu(null); runTask("build", activeFile, activeProject?.path); }}
+                  >
+                    <span>Run Build Task...</span>
+                    <span style={shortcutStyle}>Ctrl+Shift+B</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* TERMINAL MENU */}
           <div style={{ position: "relative" }}>
             <button
               style={menuBtnStyle("terminal")}
@@ -634,7 +785,7 @@ export function TopBar({
                     <button
                       style={menuItemStyle}
                       className="dropdown-item"
-                      onClick={() => { setOpenMenu(null); handleRunCommand("npm run dev", "dev"); }}
+                      onClick={() => { setOpenMenu(null); window.dispatchEvent(new CustomEvent("csotic:open-terminal", { detail: { cmd: "npm run dev", cwd: activeProject.path } })); }}
                     >
                       <span>Run Dev Server</span>
                       <span style={shortcutStyle}>npm run dev</span>
@@ -642,7 +793,7 @@ export function TopBar({
                     <button
                       style={menuItemStyle}
                       className="dropdown-item"
-                      onClick={() => { setOpenMenu(null); handleRunCommand("npm run build", "build"); }}
+                      onClick={() => { setOpenMenu(null); window.dispatchEvent(new CustomEvent("csotic:open-terminal", { detail: { cmd: "npm run build", cwd: activeProject.path } })); }}
                     >
                       <span>Run Build</span>
                       <span style={shortcutStyle}>npm run build</span>
@@ -650,7 +801,7 @@ export function TopBar({
                     <button
                       style={menuItemStyle}
                       className="dropdown-item"
-                      onClick={() => { setOpenMenu(null); handleRunCommand("npm test", "test"); }}
+                      onClick={() => { setOpenMenu(null); window.dispatchEvent(new CustomEvent("csotic:open-terminal", { detail: { cmd: "npm test", cwd: activeProject.path } })); }}
                     >
                       <span>Run Tests</span>
                       <span style={shortcutStyle}>npm test</span>
@@ -660,232 +811,207 @@ export function TopBar({
               </div>
             )}
           </div>
-        </div>
 
-        <div style={{ width: 1, height: 18, background: "var(--color-border-subtle)", margin: "0 4px" }} />
-
-        {/* Project Name Indicator */}
-        {activeProject && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: "12px", color: "var(--color-text-primary)", fontWeight: 600 }}>
-              {activeProject.name}
-            </span>
-            <span
-              style={{
-                fontSize: "10.5px",
-                color: "var(--color-text-tertiary)",
-                maxWidth: 180,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                opacity: 0.7,
-              }}
-              title={activeProject.path}
-            >
-              {activeProject.path.replace(/^[\\/]+/, "")}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Center Section: Quick Open & Project Runner */}
-      <div className="topbar__section topbar__section--center" style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0, justifyContent: "center", overflow: "hidden" }}>
-        {/* Quick Open bar */}
-        <button
-          className="btn btn--secondary"
-          onClick={onOpenSearch}
-          style={{
-            width: 200,
-            justifyContent: "flex-start",
-            gap: 6,
-            color: "var(--color-text-tertiary)",
-            fontSize: "12px",
-            height: 28,
-            padding: "0 10px",
-            background: "var(--color-input-bg, var(--color-bg-surface))",
-            border: "1px solid var(--color-border-subtle)",
-          }}
-          title="Quick Open File (Ctrl+P)"
-        >
-          <Search size={13} style={{ opacity: 0.7 }} />
-          <span>Quick Open...</span>
-          <span style={{ marginLeft: "auto", fontSize: "10px", opacity: 0.6, background: "var(--color-item-hover)", padding: "1px 4px", borderRadius: 3 }}>
-            Ctrl+P
-          </span>
-        </button>
-
-        {onOpenCommandPalette && (
-          <button
-            className="btn btn--secondary"
-            onClick={onOpenCommandPalette}
-            style={{
-              padding: "0 8px",
-              height: 28,
-              fontSize: "11.5px",
-              gap: 5,
-              background: "var(--color-input-bg, var(--color-bg-surface))",
-              border: "1px solid var(--color-border-subtle)",
-            }}
-            title="Command Palette (Ctrl+Shift+P)"
-          >
-            <span>⌘</span>
-            <span style={{ fontSize: "10px", opacity: 0.6 }}>Ctrl+Shift+P</span>
-          </button>
-        )}
-
-        {/* Preset Task Buttons — Dynamic based on Active File / Project */}
-        {(activeProject || activeFile) && (
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {/* HELP MENU */}
+          <div style={{ position: "relative" }}>
             <button
-              className="btn btn--secondary"
-              onClick={() => handleRunCommand(smartTask.runCmd, "run")}
-              disabled={isRunning}
-              title={smartTask.runTitle}
-              style={{
-                height: 28,
-                fontSize: "11.5px",
-                padding: "0 9px",
-                gap: 5,
-                color: activeTaskName === "run" ? "#34d399" : "#ffffff",
-                background: activeTaskName === "run" ? "rgba(52, 211, 153, 0.2)" : "rgba(255, 255, 255, 0.06)",
-                border: "1px solid rgba(255, 255, 255, 0.14)",
-                borderRadius: 5,
-                display: "flex",
-                alignItems: "center",
-                cursor: "pointer",
-                fontWeight: 500,
+              style={menuBtnStyle("help")}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenMenu(openMenu === "help" ? null : "help");
               }}
+              onMouseEnter={() => openMenu && setOpenMenu("help")}
             >
-              {isRunning && activeTaskName === "run" ? (
-                <Square size={12} fill="#34d399" />
-              ) : (
-                <Play size={12} fill="#34d399" style={{ color: "#34d399" }} />
-              )}
-              <span>{smartTask.runLabel}</span>
+              Help
             </button>
-
-            {smartTask.hasBuild && (
-              <button
-                className="btn btn--secondary"
-                onClick={() => handleRunCommand(smartTask.buildCmd, "build")}
-                disabled={isRunning}
-                title={smartTask.buildTitle}
-                style={{
-                  height: 28,
-                  fontSize: "11.5px",
-                  padding: "0 9px",
-                  gap: 5,
-                  color: activeTaskName === "build" ? "#ef4444" : "var(--color-text-secondary)",
-                  background: activeTaskName === "build" ? "rgba(239, 68, 68, 0.2)" : "rgba(255, 255, 255, 0.06)",
-                  border: "1px solid rgba(255, 255, 255, 0.14)",
-                  borderRadius: 5,
-                  display: "flex",
-                  alignItems: "center",
-                  cursor: "pointer",
-                  fontWeight: 500,
-                }}
-              >
-                <Hammer size={12} style={{ color: "#f87171" }} />
-                <span>{smartTask.buildLabel}</span>
-              </button>
+            {openMenu === "help" && (
+              <div style={dropdownStyle} className="animate-pop-in">
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); onOpenWelcomeTab?.(); }}
+                >
+                  <span>Welcome Page</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); onOpenShortcuts?.(); }}
+                >
+                  <span>Keyboard Shortcuts</span>
+                </button>
+                <div style={{ height: 1, background: "var(--color-border-subtle)", margin: "3px 0" }} />
+                <button
+                  style={menuItemStyle}
+                  className="dropdown-item"
+                  onClick={() => { setOpenMenu(null); onOpenSettings?.(); }}
+                >
+                  <span>Settings</span>
+                </button>
+              </div>
             )}
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Right Section: Model Selector, Quick Actions & Settings */}
-      <div className="topbar__section topbar__section--right" style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-        {/* Sleek Custom Model Selector Dropdown */}
-        {modelsList.length > 0 && onSelectModel && (
-          <ModelSelectorDropdown
-            modelsList={modelsList}
-            activeModel={activeModel ?? null}
-            onSelectModel={onSelectModel}
-            onOpenSettings={onOpenSettings}
-          />
-        )}
-
-        {onNewFile && (
-          <button
-            className="btn btn--icon"
-            onClick={onNewFile}
-            title="New File (Ctrl+N)"
-            style={{ width: 28, height: 28, padding: 0 }}
-          >
-            <FilePlus2 size={15} />
-          </button>
-        )}
-
-        {onToggleAiSlide && (
-          <button
-            className={`btn btn--icon ${aiSlideVisible ? "btn--active" : ""}`}
-            onClick={onToggleAiSlide}
-            title="Toggle AI Coder Slide (Ctrl+L)"
-            style={{
-              width: 28, height: 28, padding: 0,
-              color: aiSlideVisible ? "#ef4444" : undefined,
-              background: aiSlideVisible ? "rgba(239, 68, 68, 0.18)" : undefined,
-            }}
-          >
-            <Sparkles size={15} />
-          </button>
-        )}
-
-        {onToggleSplit && (
-          <button
-            className={`btn btn--icon ${isSplit ? "btn--active" : ""}`}
-            onClick={onToggleSplit}
-            title="Toggle Split Editor (Ctrl+\)"
-            style={{ width: 28, height: 28, padding: 0 }}
-          >
-            <Columns size={15} />
-          </button>
-        )}
-
+      {/* Center Section: Symmetrical Unified Omnibar */}
+      <div 
+        className="topbar__section topbar__section--center" 
+        style={{ 
+          display: "flex", 
+          alignItems: "center", 
+          justifyContent: "center", 
+          flex: 1, 
+          minWidth: 0, 
+          padding: "0 16px",
+        }}
+      >
         <button
-          className="btn btn--icon"
-          onClick={onToggleBottomDock}
-          title="Toggle Terminal & Output (Ctrl+`)"
-          style={{ width: 28, height: 28, padding: 0 }}
+          className="topbar__omnibar-btn"
+          onClick={onOpenSearch}
+          style={{
+            width: "100%",
+            maxWidth: 420,
+            height: 28,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 10px",
+            background: "rgba(255, 255, 255, 0.04)",
+            border: "1px solid var(--color-border-subtle)",
+            borderRadius: 6,
+            color: "var(--color-text-tertiary)",
+            fontSize: "12px",
+            cursor: "pointer",
+            transition: "all 0.15s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(255, 255, 255, 0.07)";
+            e.currentTarget.style.borderColor = "#ef4444";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "rgba(255, 255, 255, 0.04)";
+            e.currentTarget.style.borderColor = "var(--color-border-subtle)";
+          }}
+          title="Quick Open (Ctrl+P)"
         >
-          <TerminalIcon size={15} />
+          <div style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden", minWidth: 0 }}>
+            <Search size={13} style={{ opacity: 0.7, flexShrink: 0 }} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-secondary)", fontSize: "12px" }}>
+              {activeProject?.name ? `${activeProject.name} — Quick Open (Ctrl+P)` : "Quick Open (Ctrl+P)"}
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            <span style={{ 
+              fontSize: "10px", 
+              fontWeight: 500,
+              padding: "1px 5px", 
+              borderRadius: 3, 
+              background: "rgba(255, 255, 255, 0.06)", 
+              border: "1px solid rgba(255, 255, 255, 0.08)",
+              color: "var(--color-text-secondary)",
+              letterSpacing: "0.2px"
+            }}>
+              Ctrl+P
+            </span>
+          </div>
         </button>
+      </div>
 
-        <button
-          className="btn btn--icon"
-          onClick={onToggleRightPanel}
-          title="Toggle AI Context Panel"
-          style={{ width: 28, height: 28, padding: 0 }}
-        >
-          <Bot size={15} />
-        </button>
+      {/* Right Section: Symmetrical, Grouped Toolbars */}
+      <div 
+        className="topbar__section topbar__section--right" 
+        style={{ 
+          display: "flex", 
+          alignItems: "center", 
+          gap: 6, 
+          flexShrink: 0,
+        }}
+      >
 
-        {onOpenSettings && (
+
+        <div style={{ width: 1, height: 16, background: "var(--color-border-subtle)" }} />
+
+        {/* Group 2: AI & Layout Tools */}
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          {onToggleAiSlide && (
+            <button
+              className={`btn btn--icon ${aiSlideVisible ? "btn--active" : ""}`}
+              onClick={onToggleAiSlide}
+              title="Toggle AI Coder Slide (Ctrl+L)"
+              style={{
+                width: 28,
+                height: 28,
+                padding: 0,
+                color: aiSlideVisible ? "#ef4444" : undefined,
+                background: aiSlideVisible ? "rgba(239, 68, 68, 0.18)" : undefined,
+              }}
+            >
+              <Sparkles size={14} />
+            </button>
+          )}
+
+          {onToggleRightPanel && (
+            <button
+              className={`btn btn--icon ${rightPanelVisible ? "btn--active" : ""}`}
+              onClick={onToggleRightPanel}
+              title={rightPanelVisible ? "Hide Context Panel (Ctrl+J)" : "Show Context Panel (Ctrl+J)"}
+              style={{
+                width: 28,
+                height: 28,
+                padding: 0,
+                color: rightPanelVisible ? "var(--color-accent-primary)" : undefined,
+                background: rightPanelVisible ? "rgba(239, 68, 68, 0.15)" : undefined,
+                border: rightPanelVisible ? "1px solid rgba(239, 68, 68, 0.3)" : undefined,
+              }}
+            >
+              <Bot size={14} />
+            </button>
+          )}
+
+
           <button
             className="btn btn--icon"
-            onClick={onOpenSettings}
-            title="Settings & API Keys"
+            onClick={onToggleBottomDock}
+            title="Toggle Terminal & Output (Ctrl+`)"
             style={{ width: 28, height: 28, padding: 0 }}
           >
-            <Sliders size={15} />
+            <TerminalIcon size={14} />
           </button>
-        )}
+        </div>
 
-        {onToggleTheme && (
-          <button
-            className="btn btn--icon"
-            onClick={onToggleTheme}
-            title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
-            style={{
-              width: 28,
-              height: 28,
-              padding: 0,
-              color: theme === "light" ? "#f59e0b" : "#f87171",
-            }}
-          >
-            {theme === "light" ? <Moon size={15} /> : <Sun size={15} />}
-          </button>
-        )}
+        <div style={{ width: 1, height: 16, background: "var(--color-border-subtle)" }} />
+
+        {/* Group 3: Settings & Theme */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {onOpenSettings && (
+            <button
+              className="btn btn--icon"
+              onClick={onOpenSettings}
+              title="Settings & Preferences"
+              style={{ width: 28, height: 28, padding: 0 }}
+            >
+              <Sliders size={14} />
+            </button>
+          )}
+
+          {onToggleTheme && (
+            <button
+              className="btn btn--icon"
+              onClick={onToggleTheme}
+              title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
+              style={{
+                width: 28,
+                height: 28,
+                padding: 0,
+                color: theme === "light" ? "#f59e0b" : "#f87171",
+              }}
+            >
+              {theme === "light" ? <Moon size={14} /> : <Sun size={14} />}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ══ Native Windows Framing Controls (ALWAYS PINNED TO TOP-RIGHT) ══ */}

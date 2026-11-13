@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { system, models } from "../services/ipc";
 import { ModelMetadata } from "../types/ipc";
-import { Plus, Trash2, CheckCircle, AlertCircle, Key, Server, Cpu, Palette, Database, Globe, BookOpen, Sparkles, Eye, EyeOff, X } from "lucide-react";
+import { Plus, Trash2, CheckCircle, AlertCircle, Key, Server, Cpu, Palette, Database, Globe, BookOpen, Sparkles, Eye, EyeOff, X, User, Cloud, ShieldCheck, LogOut } from "lucide-react";
+import type { AuthSession } from "../types/auth";
 import { 
   OpenAILogo, 
   ClaudeLogo, 
@@ -29,9 +30,13 @@ interface SettingsModalProps {
   onRefreshModels?: () => void;
   theme?: "dark" | "light";
   onToggleTheme?: () => void;
+  session?: AuthSession | null;
+  onOpenAuthModal?: () => void;
+  onLogout?: () => void;
+  initialTab?: SettingsTab;
 }
 
-type SettingsTab = "models" | "keys" | "rules" | "general";
+type SettingsTab = "models" | "keys" | "rules" | "accounts" | "general";
 
 export const DEFAULT_GLOBAL_RULES = `1. EXPERT PAIR PROGRAMMER: Think through problems step-by-step with deep technical understanding and clear, articulate communication.
 2. PRODUCTION-GRADE CODE: Write robust, secure, maintainable, and clean code that fits naturally into the existing project architecture without omitting logic.
@@ -135,9 +140,25 @@ export function SettingsModal({
   onRefreshModels,
   theme = "dark",
   onToggleTheme,
+  session,
+  onOpenAuthModal,
+  onLogout,
+  initialTab,
 }: SettingsModalProps) {
   const [diagnostics, setDiagnostics] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<SettingsTab>("keys");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab || "keys");
+  const [syncSettings, setSyncSettings] = useState({
+    settings: true,
+    rules: true,
+    extensions: true,
+    history: false,
+  });
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab, isOpen]);
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [initialKeys, setInitialKeys] = useState<Record<string, string>>({});
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
@@ -219,12 +240,12 @@ export function SettingsModal({
           setInitialKeys({ ...loaded });
           if (data.custom_endpoints) {
             try {
-              const parsed = JSON.parse(data.custom_endpoints);
-              if (Array.isArray(parsed)) {
-                setCustomEndpoints(parsed);
-                setInitialEndpoints(parsed);
+              const ep = JSON.parse(data.custom_endpoints);
+              if (Array.isArray(ep)) {
+                setCustomEndpoints(ep);
+                setInitialEndpoints(ep);
               }
-            } catch { /* ignore */ }
+            } catch {}
           }
         }
       });
@@ -237,6 +258,7 @@ export function SettingsModal({
     { id: "keys", label: "API Keys", icon: <Key size={14} /> },
     { id: "models", label: "Models", icon: <Cpu size={14} /> },
     { id: "rules", label: "Global Rules", icon: <BookOpen size={14} /> },
+    { id: "accounts", label: "Accounts & Sync", icon: <User size={14} /> },
     { id: "general", label: "General", icon: <Palette size={14} /> },
   ];
 
@@ -760,6 +782,241 @@ export function SettingsModal({
               <div>
                 <strong style={{ color: "var(--color-text-primary)" }}>System status:</strong>
                 <div style={{ marginTop: 4 }}>Connected to trusted Rust runtime v{diagnostics?.version || "0.1.0"}</div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "accounts" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              {/* Account Identity Card */}
+              <div
+                style={{
+                  padding: 16,
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-bg-base)",
+                  border: "1px solid var(--color-border-subtle)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 14,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: "50%",
+                        background: session?.user ? "rgba(239, 68, 68, 0.15)" : "rgba(255,255,255,0.05)",
+                        border: session?.user ? "2px solid #ef4444" : "1px solid var(--color-border-default)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {session?.user?.avatarUrl ? (
+                        <img
+                          src={session.user.avatarUrl}
+                          alt={session.user.name || "User"}
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        />
+                      ) : (
+                        <User size={22} style={{ color: "var(--color-text-secondary)" }} />
+                      )}
+                    </div>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <strong style={{ fontSize: 14, color: "var(--color-text-primary)" }}>
+                          {session?.user?.name || session?.user?.username || "Not Signed In"}
+                        </strong>
+                        {session?.user && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                              background: session.provider === "github" ? "rgba(255,255,255,0.1)" : "rgba(66, 133, 244, 0.15)",
+                              color: session.provider === "github" ? "#f3f4f6" : "#60a5fa",
+                              border: "1px solid rgba(255,255,255,0.1)",
+                            }}
+                          >
+                            {session.provider === "github" ? "GitHub Connected" : session.provider === "google" ? "Google Account" : "Local Dev"}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--color-text-tertiary)", marginTop: 2 }}>
+                        {session?.user?.email || "Connect your GitHub or Google account to sync settings and AI rules"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {session?.user ? (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        onClick={onOpenAuthModal}
+                        className="btn btn--secondary"
+                        style={{ fontSize: 12, padding: "5px 10px" }}
+                      >
+                        Manage Identity
+                      </button>
+                      <button
+                        onClick={onLogout}
+                        className="btn btn--secondary"
+                        style={{ fontSize: 12, padding: "5px 10px", color: "#f87171" }}
+                      >
+                        <LogOut size={13} style={{ marginRight: 4 }} />
+                        Sign Out
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={onOpenAuthModal}
+                      className="btn btn--primary"
+                      style={{ fontSize: 12, padding: "6px 14px", display: "flex", alignItems: "center", gap: 6 }}
+                    >
+                      <User size={13} />
+                      Sign In / Connect
+                    </button>
+                  )}
+                </div>
+
+                {session?.user && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 16,
+                      paddingTop: 12,
+                      borderTop: "1px solid var(--color-border-subtle)",
+                      fontSize: 11,
+                      color: "var(--color-text-tertiary)",
+                    }}
+                  >
+                    <div><strong style={{ color: "var(--color-text-secondary)" }}>Login:</strong> @{session.user.username}</div>
+                    <div><strong style={{ color: "var(--color-text-secondary)" }}>Auth Status:</strong> <span style={{ color: "#22c55e" }}>Active Token</span></div>
+                    <div><strong style={{ color: "var(--color-text-secondary)" }}>Session Stored:</strong> ~/.forge/auth.json</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Settings Sync Controls */}
+              <div
+                style={{
+                  padding: 16,
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-bg-base)",
+                  border: "1px solid var(--color-border-subtle)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Cloud size={16} style={{ color: "#ef4444" }} />
+                    <strong style={{ fontSize: 13, color: "var(--color-text-primary)" }}>Settings Sync & Backup</strong>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                      background: session?.user ? "rgba(34, 197, 94, 0.1)" : "rgba(255,255,255,0.05)",
+                      color: session?.user ? "#22c55e" : "var(--color-text-tertiary)",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {session?.user ? "Sync Ready" : "Sign In to Sync"}
+                  </span>
+                </div>
+
+                <div style={{ fontSize: 11.5, color: "var(--color-text-tertiary)" }}>
+                  Synchronize your preferences across machines running Csotic IDE.
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 4 }}>
+                  {[
+                    { key: "settings", label: "Application Preferences & Themes", desc: "Font size, editor tab settings, UI theme" },
+                    { key: "rules", label: "Global AI Persona & Rules", desc: "System prompts and reasoning instructions" },
+                    { key: "extensions", label: "Installed Extensions Manifest", desc: "Claude Code and community plugins" },
+                    { key: "history", label: "Pair Programming History", desc: "Synced AI chats and memory scratchpads" },
+                  ].map((item) => (
+                    <label
+                      key={item.key}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        padding: 10,
+                        borderRadius: 6,
+                        background: "rgba(255,255,255,0.02)",
+                        border: "1px solid var(--color-border-subtle)",
+                        cursor: session?.user ? "pointer" : "default",
+                        opacity: session?.user ? 1 : 0.6,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={Boolean(syncSettings[item.key as keyof typeof syncSettings])}
+                        disabled={!session?.user}
+                        onChange={(e) => {
+                          setSyncSettings((prev) => ({
+                            ...prev,
+                            [item.key]: e.target.checked,
+                          }));
+                        }}
+                        style={{ marginTop: 2, accentColor: "#ef4444" }}
+                      />
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-primary)" }}>
+                          {item.label}
+                        </div>
+                        <div style={{ fontSize: 10.5, color: "var(--color-text-tertiary)", marginTop: 2 }}>
+                          {item.desc}
+                        </div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Git Committer Identity Card */}
+              <div
+                style={{
+                  padding: 16,
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-bg-base)",
+                  border: "1px solid var(--color-border-subtle)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <ShieldCheck size={16} style={{ color: "#22c55e" }} />
+                  <strong style={{ fontSize: 13, color: "var(--color-text-primary)" }}>Git Committer Identity</strong>
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--color-text-tertiary)" }}>
+                  Git commits created in the Source Control panel will automatically use:
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 16,
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    background: "rgba(255,255,255,0.02)",
+                    border: "1px solid var(--color-border-subtle)",
+                    fontSize: 12,
+                    fontFamily: "var(--font-mono, monospace)",
+                  }}
+                >
+                  <div>Author: <span style={{ color: "#f3f4f6" }}>{session?.user?.name || "Local Developer"}</span></div>
+                  <div>Email: <span style={{ color: "#f3f4f6" }}>{session?.user?.email || "developer@local"}</span></div>
+                </div>
               </div>
             </div>
           )}

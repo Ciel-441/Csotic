@@ -7,8 +7,13 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "check:ipc": "node scripts/check-ipc-contract.mjs",
+    "test:auth": "node scripts/test-auth-security.mjs",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:setup": "tauri build -b nsis",
+    "build:installer:win": "tauri build -b nsis,msi",
+    "build:installer:linux": "tauri build -b deb,appimage",
+    "build:installer:mac": "tauri build -b dmg,app"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -16,6 +21,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "diff": "^9.0.0",
     "lucide-react": "^1.33.0",
+    "monaco-editor": "^0.56.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0"

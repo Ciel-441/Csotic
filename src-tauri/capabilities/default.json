@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:event:default",
     "opener:default",
     "core:window:default",
     "core:window:allow-minimize",
@@ -15,6 +16,8 @@
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",
     "core:window:allow-is-maximized",
-    "core:window:allow-is-minimized"
+    "core:window:allow-is-minimized",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen"
   ]
 }

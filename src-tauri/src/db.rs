@@ -1,10 +1,17 @@
 use rusqlite::{Connection, Result as SqlResult};
 use std::path::Path;
 
-/// Initialize the SQLite database with versioned migrations.
+/// Initialize the SQLite database with versioned migrations and low-memory, fast-sync PRAGMAs.
 pub fn init_db(db_path: &Path) -> SqlResult<Connection> {
     let conn = Connection::open(db_path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA foreign_keys = ON;
+         PRAGMA cache_size = -2000;
+         PRAGMA temp_store = MEMORY;
+         PRAGMA mmap_size = 67108864;"
+    )?;
     migrate(&conn)?;
     Ok(conn)
 }

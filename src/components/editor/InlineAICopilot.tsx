@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Sparkles, Check, X, ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { models } from "../../services/ipc";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "../../services/events";
 import { DiffViewer } from "../DiffViewer";
 
 interface InlineAICopilotProps {
@@ -42,18 +42,21 @@ export function InlineAICopilot({
   // Listen to streaming chunks
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     let accumulated = "";
 
     listen<{ text: string; request_id: string }>("model-stream-chunk", (event) => {
-      if (event.payload.request_id === requestIdRef.current) {
+      if (!disposed && event.payload.request_id === requestIdRef.current) {
         accumulated += event.payload.text;
         setGeneratedCode(accumulated);
       }
     }).then((stop) => {
-      unlisten = stop;
+      if (disposed) stop();
+      else unlisten = stop;
     });
 
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, []);
@@ -126,12 +129,10 @@ Provide the replacement code:`;
         top: 20,
         right: 40,
         width: 520,
-        zIndex: 50,
-        background: "rgba(14, 4, 7, 0.95)",
-        backdropFilter: "blur(20px)",
-        border: "1px solid rgba(239, 68, 68, 0.35)",
+        background: "var(--color-modal-bg, #202024)",
+        border: "1px solid var(--color-border-default, #2e2e34)",
         borderRadius: "var(--radius-lg)",
-        boxShadow: "0 12px 36px rgba(0, 0, 0, 0.8), 0 0 25px rgba(239, 68, 68, 0.25)",
+        boxShadow: "0 12px 32px rgba(0, 0, 0, 0.6)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

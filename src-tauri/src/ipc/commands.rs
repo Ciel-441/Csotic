@@ -169,7 +169,11 @@ async fn execute_dispatch(
                 .map_err(|e| (ErrorCode::Internal, e))
         }
         "plugins" => {
-            services::plugins::handle(&action, &payload)
+            services::plugins::handle(&action, &payload).await
+                .map_err(|e| (ErrorCode::Internal, e))
+        }
+        "ext_host" => {
+            services::ext_host::handle(&action, &payload, app).await
                 .map_err(|e| (ErrorCode::Internal, e))
         }
         "collaboration" => {
@@ -191,7 +195,7 @@ async fn execute_dispatch(
         "project_state" => {
             let active_path_opt = state.active_project_path.lock().ok().and_then(|g| g.clone());
             let project_path = payload.get("project_path").and_then(|v| v.as_str())
-                .or_else(|| active_path_opt.as_deref())
+                .or(active_path_opt.as_deref())
                 .unwrap_or_default();
             let state = services::project_state::ProjectDetector::detect(project_path);
             serde_json::to_value(state).map_err(|e| (ErrorCode::Internal, format!("Serialization error: {e}")))
@@ -248,6 +252,9 @@ async fn execute_dispatch(
             } else {
                 Err((ErrorCode::Internal, "Main window not found".to_string()))
             }
+        }
+        "auth" => {
+            services::auth::handle_action(&action, &payload).await
         }
         _ => Err((ErrorCode::Validation, format!("Unknown service: {service}"))),
     }

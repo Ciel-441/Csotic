@@ -155,7 +155,7 @@ pub fn get_all_memories_summary(db: &Mutex<Connection>, project_id: Option<&str>
     }
 
     // Sort by keyword overlap score DESC
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|b| std::cmp::Reverse(b.0));
 
     let top_memories: Vec<String> = scored.into_iter().take(5).map(|(_, s)| s).collect();
 

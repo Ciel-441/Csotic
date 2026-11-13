@@ -2,6 +2,7 @@ use tracing::{info, error, debug};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[allow(dead_code)]
 pub enum Subsystem {
     AI,
     IPC,
@@ -40,6 +41,7 @@ impl ForgeLogger {
         }
     }
 
+    #[allow(dead_code)]
     pub fn debug(subsystem: Subsystem, message: &str) {
         debug!(subsystem = %subsystem, "{}", message);
     }

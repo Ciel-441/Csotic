@@ -18,11 +18,25 @@
         "height": 800,
         "minWidth": 650,
         "minHeight": 450,
-        "decorations": false
+        "decorations": false,
+        "zoomHotkeysEnabled": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline' https:",
+        "img-src": "'self' data: blob: https:",
+        "font-src": "'self' data: https:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://open-vsx.org https://*.open-vsx.org http://127.0.0.1:* http://localhost:*",
+        "frame-src": "'self' http://127.0.0.1:* http://localhost:* https:",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'"
+      },
+      "devCsp": null,
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
   "bundle": {
@@ -30,10 +44,84 @@
     "targets": "all",
     "icon": [
       "icons/32x32.png",
+      "icons/64x64.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
+      "icons/icon.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Csotic - Local-First AI Software Engineering Environment",
+    "longDescription": "Csotic is a local-first software engineering IDE with offline model support, real-time code analysis, workspace graphs, and extension hosting.",
+    "copyright": "Copyright 2026 Csotic Contributors",
+    "fileAssociations": [
+      {
+        "ext": ["sal", "salivo"],
+        "mimeType": "text/x-salivo",
+        "description": "Salivo Source File"
+      },
+      {
+        "ext": ["c", "cpp", "h", "hpp"],
+        "mimeType": "text/x-csrc",
+        "description": "C/C++ Source File"
+      },
+      {
+        "ext": ["rs"],
+        "mimeType": "text/x-rust",
+        "description": "Rust Source File"
+      },
+      {
+        "ext": ["ts", "tsx", "js", "jsx"],
+        "mimeType": "text/javascript",
+        "description": "JavaScript/TypeScript Source File"
+      },
+      {
+        "ext": ["py"],
+        "mimeType": "text/x-python",
+        "description": "Python Source File"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico"
+      },
+      "wix": {
+        "language": "en-US"
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1",
+          "librsvg2-2",
+          "libssl3 | libssl1.1"
+        ],
+        "section": "devel",
+        "priority": "optional"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "10.15",
+      "dmg": {
+        "background": null,
+        "windowSize": {
+          "width": 600,
+          "height": 400
+        },
+        "windowPosition": {
+          "x": 200,
+          "y": 200
+        }
+      }
+    }
   }
 }

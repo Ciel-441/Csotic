@@ -188,7 +188,7 @@ impl WorkspaceTruth {
                     match fs::read_to_string(&full_path) {
                         Ok(current_content) => {
                             let current_hash = crate::services::filesystem::compute_sha256(&current_content);
-                            if &current_hash != exp {
+                            if current_hash != exp {
                                 return Err(format!(
                                     "TRUTH_VIOLATION: Conflict detected on '{}'. Expected hash '{}' but disk currently has '{}'. The file was modified externally.",
                                     clean_rel, exp, current_hash
@@ -204,6 +204,7 @@ impl WorkspaceTruth {
     }
 
     /// Verifies that a planned mutation matches the current reality of the disk.
+    #[allow(dead_code)]
     pub fn verify_pre_mutation(
         &self,
         rel_path: &str,

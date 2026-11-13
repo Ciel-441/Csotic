@@ -6,7 +6,10 @@ use lru::LruCache;
 
 fn file_cache() -> &'static Mutex<LruCache<String, String>> {
     static CACHE: OnceLock<Mutex<LruCache<String, String>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())))
+    CACHE.get_or_init(|| {
+        let cap = NonZeroUsize::new(100).unwrap_or(NonZeroUsize::MIN);
+        Mutex::new(LruCache::new(cap))
+    })
 }
 
 fn cache_get(key: &str) -> Option<String> {
@@ -262,34 +265,32 @@ pub async fn handle(action: &str, payload: &serde_json::Value, _project_path: Op
                 .max_depth(Some(12))
                 .build();
 
-            for result in walker {
-                if let Ok(entry) = result {
-                    let entry_raw = entry.path();
-                    let clean_entry = PathBuf::from(strip_unc_prefix(&entry_raw.to_string_lossy()));
-                    if clean_entry == clean_base_path {
-                        continue;
-                    }
-                    let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-                    let rel_path = clean_entry.strip_prefix(&clean_base_path)
-                        .map(|p| p.to_string_lossy().replace('\\', "/"))
-                        .unwrap_or_else(|_| clean_entry.to_string_lossy().to_string());
-                    
-                    // Skip noisy dependency and build directories
-                    if rel_path.starts_with(".git/") || rel_path == ".git"
-                        || rel_path.starts_with("node_modules/") || rel_path == "node_modules"
-                        || rel_path.starts_with("target/") || rel_path == "target"
-                        || rel_path.starts_with(".next/") || rel_path == ".next"
-                        || rel_path.starts_with("dist/") || rel_path == "dist" {
-                        continue;
-                    }
-
-                    files.push(serde_json::json!({
-                        "name": entry.file_name().to_string_lossy(),
-                        "path": clean_entry.to_string_lossy(),
-                        "relative_path": rel_path,
-                        "is_dir": is_dir,
-                    }));
+            for entry in walker.flatten() {
+                let entry_raw = entry.path();
+                let clean_entry = PathBuf::from(strip_unc_prefix(&entry_raw.to_string_lossy()));
+                if clean_entry == clean_base_path {
+                    continue;
                 }
+                let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+                let rel_path = clean_entry.strip_prefix(&clean_base_path)
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|_| clean_entry.to_string_lossy().to_string());
+                
+                // Skip noisy dependency and build directories
+                if rel_path.starts_with(".git/") || rel_path == ".git"
+                    || rel_path.starts_with("node_modules/") || rel_path == "node_modules"
+                    || rel_path.starts_with("target/") || rel_path == "target"
+                    || rel_path.starts_with(".next/") || rel_path == ".next"
+                    || rel_path.starts_with("dist/") || rel_path == "dist" {
+                    continue;
+                }
+
+                files.push(serde_json::json!({
+                    "name": entry.file_name().to_string_lossy(),
+                    "path": clean_entry.to_string_lossy(),
+                    "relative_path": rel_path,
+                    "is_dir": is_dir,
+                }));
             }
             Ok(serde_json::json!({ "files": files }))
         }
@@ -708,6 +709,7 @@ pub fn list_dir_str(project_path: &str, path: &str) -> Result<String, String> {
     Ok(result)
 }
 
+#[allow(dead_code)]
 pub fn create_dir_str(project_path: &str, path: &str) -> Result<(), String> {
     create_dir_strict(project_path, path)
 }

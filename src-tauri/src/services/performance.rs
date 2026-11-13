@@ -23,11 +23,10 @@ pub fn analyze_performance(active_files: &[String], project_path: &str) -> Vec<S
             }
 
             // Check for React unnecessary renders
-            if file.ends_with(".tsx") || file.ends_with(".jsx") {
-                if content.contains("useEffect(() => {") && !content.contains("}, [") {
+            if (file.ends_with(".tsx") || file.ends_with(".jsx"))
+                && content.contains("useEffect(() => {") && !content.contains("}, [") {
                     warnings.push(format!("PERFORMANCE RISK: `useEffect` missing dependency array in `{}`. This will trigger unnecessary renders on every update.", file));
                 }
-            }
             
             // Check for basic N+1 queries
             if content.contains("SELECT ") && for_count > 0 {

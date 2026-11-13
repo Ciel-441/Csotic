@@ -144,7 +144,7 @@ fn apply_rollback_record(project_path: &str, record: &RollbackRecord) -> Result<
         // Conflict Check: destination current hash must match the hash recorded when AI moved the file
         if let Ok((_curr_content, curr_hash)) = crate::services::filesystem::read_file_with_hash(project_path, dest) {
             if let Some(applied_hash) = &record.hash_after_apply {
-                if &curr_hash != applied_hash && &curr_hash != &record.original_hash {
+                if &curr_hash != applied_hash && curr_hash != record.original_hash {
                     return Err(format!(
                         "ROLLBACK_CONFLICT: Moved file destination '{}' was modified after the AI moved it (Current: {}, Expected: {}). Preserving manual changes.",
                         dest,
@@ -198,7 +198,7 @@ fn apply_rollback_record(project_path: &str, record: &RollbackRecord) -> Result<
         // 3. Modified file rollback (restore original content)
         if let Ok((_curr_content, curr_hash)) = crate::services::filesystem::read_file_with_hash(project_path, &record.path) {
             if let Some(applied_hash) = &record.hash_after_apply {
-                if &curr_hash != applied_hash && &curr_hash != &record.original_hash {
+                if &curr_hash != applied_hash && curr_hash != record.original_hash {
                     return Err(format!(
                         "ROLLBACK_CONFLICT: '{}' was modified after AI edit (Current: {}, Applied: {}). Preserving manual changes.",
                         record.path,
@@ -488,7 +488,7 @@ impl RollbackJournal {
             }
         } else {
             // Sort in reverse sequence order
-            records.sort_by(|a, b| b.sequence.cmp(&a.sequence));
+            records.sort_by_key(|b| std::cmp::Reverse(b.sequence));
         }
 
         if records.is_empty() {
@@ -575,7 +575,7 @@ impl RollbackJournal {
                 }
             }
         } else {
-            records.sort_by(|a, b| b.sequence.cmp(&a.sequence));
+            records.sort_by_key(|b| std::cmp::Reverse(b.sequence));
         }
 
         if records.is_empty() {
@@ -613,6 +613,7 @@ impl RollbackJournal {
         Ok(reverted_files)
     }
 
+    #[allow(dead_code)]
     pub fn clear_task(&self, task_id: &str, db: Option<&Mutex<Connection>>) {
         let mut guard = self.lock_journals();
         guard.remove(task_id);
@@ -805,6 +806,7 @@ pub struct OperationOutcome {
     pub success: bool,
     pub output_message: String,
     pub file_diff: Option<crate::events::FileDiff>,
+    #[allow(dead_code)]
     pub new_hash: Option<String>,
 }
 

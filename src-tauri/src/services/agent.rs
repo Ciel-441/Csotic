@@ -227,9 +227,19 @@ fn build_system_prompt(project_path: &str, permission: &str, synthesis: &crate::
     let memory = if synthesis.memory_summary.is_empty() { String::new() } else { format!("\n\n[Project Context & Memory]\n{}", synthesis.memory_summary) };
     let brain = if synthesis.brain_context.is_empty() { String::new() } else { format!("\n\n[Project Architecture Vault]\n{}", synthesis.brain_context) };
     let git = if synthesis.git_diff.is_empty() { String::new() } else { format!("\n\n[Current Git Diff]\n{}", synthesis.git_diff) };
+    let graph = if synthesis.graph_context.is_empty() { String::new() } else { format!("\n\n[Project Dependency Graph]\n{}", synthesis.graph_context) };
+
+    let mut diagnostics = Vec::new();
+    if !synthesis.predictive_warnings.is_empty() { diagnostics.push(format!("Predictive Warnings:\n{}", synthesis.predictive_warnings)); }
+    if !synthesis.security_warnings.is_empty() { diagnostics.push(format!("Security Warnings:\n{}", synthesis.security_warnings)); }
+    if !synthesis.runtime_warnings.is_empty() { diagnostics.push(format!("Runtime Warnings:\n{}", synthesis.runtime_warnings)); }
+    if !synthesis.performance_warnings.is_empty() { diagnostics.push(format!("Performance Warnings:\n{}", synthesis.performance_warnings)); }
+    if !synthesis.refactoring_warnings.is_empty() { diagnostics.push(format!("Refactoring Warnings:\n{}", synthesis.refactoring_warnings)); }
+    if !synthesis.plugin_warnings.is_empty() { diagnostics.push(format!("Plugin Warnings:\n{}", synthesis.plugin_warnings)); }
+    let warnings = if diagnostics.is_empty() { String::new() } else { format!("\n\n[Intelligent Codebase Diagnostics & Warnings]\n{}", diagnostics.join("\n\n")) };
 
     format!(
-        "You are Csotic, an expert software engineer and AI pair programmer. You help the user build, modify, debug, and understand software in their workspace.{project_header}{memory}{brain}{git}
+        "You are Csotic, an expert software engineer and AI pair programmer. You help the user build, modify, debug, and understand software in their workspace.{project_header}{memory}{brain}{git}{graph}{warnings}
 
 Core Operating Guidelines:
 1. Think carefully and reason step-by-step to understand the problem before modifying code.
@@ -306,7 +316,7 @@ fn compact_context(messages: &mut Vec<OllamaMessage>, objective: &str, context_w
     while compact_end < messages.len() {
         let msg = &messages[compact_end];
         let is_safe_boundary = msg.role == "user"
-            || (msg.role == "assistant" && msg.tool_calls.as_ref().map_or(true, |c| c.is_empty()));
+            || (msg.role == "assistant" && msg.tool_calls.as_ref().is_none_or(|c| c.is_empty()));
         if is_safe_boundary {
             break;
         }
@@ -361,6 +371,7 @@ fn compact_context(messages: &mut Vec<OllamaMessage>, objective: &str, context_w
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Check if the final text contains success/completion language.
+#[allow(dead_code)]
 fn contains_success_language(text: &str) -> bool {
     let lower = text.to_lowercase();
     ["done", "fixed", "working", "successfully", "complete", "completed", "implemented", "created", "finished"]
@@ -419,6 +430,7 @@ fn read_image_base64(path: &str) -> Result<String, String> {
 // Main agent loop
 // ─────────────────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum LoopState {
     Analyze,
     Plan,
@@ -600,11 +612,7 @@ async fn stream_cloud_chat(
                             .and_then(|e| {
                                 if let Some(msg) = e.get("message").and_then(|m| m.as_str()) {
                                     Some(msg.to_string())
-                                } else if let Some(s) = e.as_str() {
-                                    Some(s.to_string())
-                                } else {
-                                    None
-                                }
+                                } else { e.as_str().map(|s| s.to_string()) }
                             })
                             .or_else(|| parsed.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
                     })
@@ -771,7 +779,7 @@ async fn run_agent_loop(
     let is_deepseek = crate::services::models::is_deepseek_model(&model_id);
     let is_gemini = crate::services::models::is_gemini_model(&model_id);
     let is_anthropic = crate::services::models::is_anthropic_model(&model_id);
-    let is_cloud = is_openrouter || is_openai || is_groq || is_deepseek || is_gemini || is_anthropic;
+    let _is_cloud = is_openrouter || is_openai || is_groq || is_deepseek || is_gemini || is_anthropic;
 
     // Get context window and vision support
     let (context_window, supports_vision) = if is_openrouter || is_anthropic {
@@ -876,7 +884,6 @@ async fn run_agent_loop(
 
 
     // Phase 4 counters: behavioral nudge caps (1 per run each)
-    let mut verification_nudges_used: u32 = 0;
     let mut read_before_write_nudges_used: u32 = 0;
 
     let project_id = crate::services::filesystem::compute_project_id(&project_path);
@@ -1037,7 +1044,7 @@ async fn run_agent_loop(
                 Err(e) => Err(e),
             }
         } else {
-            let mut req = OllamaChatRequest {
+            let req = OllamaChatRequest {
                 model: model_id.clone(),
                 messages: messages.clone(),
                 tools: Some(tools),
@@ -1329,6 +1336,7 @@ async fn run_agent_loop(
 
         // No tool calls => model produced its final answer
         current_state = LoopState::Done;
+        let _ = current_state;
 
         finish_agent_task(
             &app,
@@ -1388,7 +1396,7 @@ async fn execute_agent_tool(
             let state = crate::services::project_state::ProjectDetector::detect(project_path);
             ToolOutcome {
                 success: true,
-                output: serde_json::to_string_pretty(&state).unwrap_or_else(|_| state.summary),
+                output: serde_json::to_string_pretty(&state).unwrap_or(state.summary),
                 file_diff: None,
             }
         }
@@ -1790,10 +1798,10 @@ fn extract_tool_calls_from_text(content: &str) -> Vec<OllamaToolCall> {
     let trimmed = content.trim();
     let pure_json_str = if (trimmed.starts_with('{') && trimmed.ends_with('}')) || (trimmed.starts_with('[') && trimmed.ends_with(']')) {
         Some(trimmed)
-    } else if trimmed.starts_with("```json") && trimmed.ends_with("```") {
-        Some(trimmed.strip_prefix("```json").unwrap().strip_suffix("```").unwrap().trim())
+    } else if let Some(stripped) = trimmed.strip_prefix("```json").and_then(|s| s.strip_suffix("```")) {
+        Some(stripped.trim())
     } else if trimmed.starts_with("```") && trimmed.ends_with("```") && !trimmed[3..].contains("```") {
-        Some(trimmed.strip_prefix("```").unwrap().strip_suffix("```").unwrap().trim())
+        trimmed.strip_prefix("```").and_then(|s| s.strip_suffix("```")).map(|s| s.trim())
     } else {
         None
     };

@@ -248,7 +248,10 @@ export function LiveWebPreview({
           src={mode === "server" ? url : undefined}
           srcDoc={mode === "code" ? (htmlContent || "<html><body style='font-family:sans-serif;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'><p>No HTML content to render</p></body></html>") : undefined}
           title="Web Preview"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+          // srcDoc inherits the app's origin: with allow-same-origin, previewed HTML (e.g. from a
+          // cloned repo) could reach window.parent's Tauri IPC and run shell commands. Only a
+          // real dev-server URL (already cross-origin) may keep its own origin.
+          sandbox={mode === "code" ? "allow-scripts allow-forms allow-modals" : "allow-scripts allow-same-origin allow-forms allow-popups allow-modals"}
           style={{
             width: getFrameWidth(),
             height: "100%",

@@ -26,4 +26,5 @@ pub mod project_state;
 pub mod changeset;
 pub mod truth;
 pub mod watcher;
-
+pub mod auth;
+pub mod ext_host;

@@ -45,9 +45,16 @@ impl ContextEngine {
         let project_id = crate::services::filesystem::compute_project_id(project_path);
         let ranked = Self::rank_context(project_path, objective, active_files, db, &project_id);
         
-        let git_diff = std::process::Command::new("git")
-            .args(["diff", "--stat"])
-            .current_dir(project_path)
+        let mut git_cmd = std::process::Command::new("git");
+        git_cmd.args(["diff", "--stat"]).current_dir(project_path);
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            git_cmd.creation_flags(0x08000000);
+        }
+
+        let git_diff = git_cmd
             .output()
             .map(|o| {
                 let diff = String::from_utf8_lossy(&o.stdout).to_string();
@@ -116,7 +123,7 @@ impl ContextEngine {
                     }
                 }
 
-                note_scores.sort_by(|a, b| b.0.cmp(&a.0));
+                note_scores.sort_by_key(|b| std::cmp::Reverse(b.0));
                 for (_score, file_name, preview) in note_scores.into_iter().take(5) {
                     brain_context.push_str(&format!("\n### {}\n{}\n", file_name, preview.trim()));
                 }
@@ -381,7 +388,7 @@ impl ContextEngine {
 
         // Convert map to sorted vec
         let mut ranked: Vec<ContextScore> = scores.into_values().collect();
-        ranked.sort_by(|a, b| b.score.cmp(&a.score));
+        ranked.sort_by_key(|b| std::cmp::Reverse(b.score));
         
         // Return top 15 most relevant files
         ranked.into_iter().take(15).collect()
@@ -508,7 +515,6 @@ impl ContextEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
     use std::sync::Mutex;
 
     #[test]

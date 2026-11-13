@@ -17,9 +17,7 @@ pub fn redact_secrets(input: &str) -> String {
     ];
 
     for pattern in &patterns {
-        if let Ok(re) = regex_lite_or_replace(&mut redacted, pattern) {
-            let _ = re;
-        }
+        let _ = regex_lite_or_replace(&mut redacted, pattern);
     }
 
     // 2. Redact Authorization headers, Bearer tokens, and key-value secret assignments

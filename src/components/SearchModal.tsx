@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { filesystem } from "../services/ipc";
 import { FileTreeItem } from "../types/ipc";
 import { getFileIcon } from "./editor/EditorTabBar";
-import { Search, Command, File, Play, Terminal, Split, Sparkles, FolderOpen, Save, GitBranch } from "lucide-react";
+import { Search, Command, File, Play, Terminal, Split, Sparkles, FolderOpen, Save, GitBranch, Settings, Maximize2, RotateCcw, Package, HelpCircle, Hammer, AlertTriangle, Eye } from "lucide-react";
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -23,13 +23,25 @@ interface CommandItem {
 const IDE_COMMANDS: CommandItem[] = [
   { id: "file.new", title: "New File", category: "File", shortcut: "Ctrl+N", icon: <File size={14} /> },
   { id: "file.save", title: "Save Active File", category: "File", shortcut: "Ctrl+S", icon: <Save size={14} /> },
-  { id: "workspace.open", title: "Open Folder / Workspace", category: "File", shortcut: "Ctrl+O", icon: <FolderOpen size={14} /> },
+  { id: "file.saveAs", title: "Save As...", category: "File", shortcut: "Ctrl+Shift+S", icon: <Save size={14} /> },
+  { id: "file.saveAll", title: "Save All Files", category: "File", shortcut: "", icon: <Save size={14} /> },
+  { id: "workspace.open", title: "Open Folder / Workspace", category: "File", shortcut: "", icon: <FolderOpen size={14} /> },
+  { id: "editor.reopenClosedTab", title: "Reopen Closed Tab", category: "View", shortcut: "Ctrl+Shift+T", icon: <RotateCcw size={14} /> },
   { id: "editor.split", title: "Toggle Split Editor", category: "View", shortcut: "Ctrl+\\", icon: <Split size={14} /> },
-  { id: "terminal.toggle", title: "Toggle Terminal & Output", category: "Terminal", shortcut: "Ctrl+`", icon: <Terminal size={14} /> },
-  { id: "runner.dev", title: "Run Dev Server (npm run dev)", category: "Run", shortcut: "", icon: <Play size={14} /> },
-  { id: "runner.build", title: "Build Project (npm run build)", category: "Run", shortcut: "", icon: <Play size={14} /> },
+  { id: "view.explorer", title: "Show Explorer", category: "View", shortcut: "Ctrl+Shift+E", icon: <FolderOpen size={14} /> },
+  { id: "view.search", title: "Show Search", category: "View", shortcut: "Ctrl+Shift+F", icon: <Search size={14} /> },
+  { id: "view.git", title: "Show Source Control", category: "View", shortcut: "Ctrl+Shift+G", icon: <GitBranch size={14} /> },
+  { id: "view.plugins", title: "Show Extensions", category: "View", shortcut: "Ctrl+Shift+X", icon: <Package size={14} /> },
+  { id: "view.problems", title: "Show Problems Panel", category: "View", shortcut: "Ctrl+Shift+M", icon: <AlertTriangle size={14} /> },
+  { id: "view.preview", title: "Toggle Markdown / Web Preview", category: "View", shortcut: "Ctrl+Shift+V", icon: <Eye size={14} /> },
+  { id: "terminal.toggle", title: "Toggle Terminal Panel", category: "Terminal", shortcut: "Ctrl+`", icon: <Terminal size={14} /> },
+  { id: "terminal.focus", title: "Focus Terminal", category: "Terminal", shortcut: "Ctrl+Shift+`", icon: <Terminal size={14} /> },
+  { id: "runner.runActive", title: "Run Active File / Dev Server", category: "Run", shortcut: "F5", icon: <Play size={14} /> },
+  { id: "runner.buildActive", title: "Build Active File / Project", category: "Run", shortcut: "Ctrl+Shift+B", icon: <Hammer size={14} /> },
+  { id: "app.settings", title: "Open Settings", category: "Preferences", shortcut: "Ctrl+,", icon: <Settings size={14} /> },
+  { id: "view.fullscreen", title: "Toggle Fullscreen", category: "View", shortcut: "F11", icon: <Maximize2 size={14} /> },
+  { id: "help.shortcuts", title: "Keyboard Shortcuts", category: "Help", shortcut: "", icon: <HelpCircle size={14} /> },
   { id: "ai.chat", title: "Open AI Pair Programmer", category: "AI", shortcut: "", icon: <Sparkles size={14} /> },
-  { id: "git.status", title: "Open Source Control (Git)", category: "Git", shortcut: "", icon: <GitBranch size={14} /> },
 ];
 
 export function SearchModal({
@@ -113,8 +125,7 @@ export function SearchModal({
         left: 0,
         right: 0,
         bottom: 0,
-        background: "rgba(0,0,0,0.65)",
-        backdropFilter: "blur(6px)",
+        background: "rgba(0, 0, 0, 0.5)",
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "center",
@@ -133,7 +144,7 @@ export function SearchModal({
           maxHeight: "480px",
           display: "flex",
           flexDirection: "column",
-          boxShadow: "0 16px 48px rgba(0,0,0,0.85), 0 0 25px rgba(239,68,68,0.2)",
+          boxShadow: "0 16px 40px rgba(0, 0, 0, 0.6)",
           overflow: "hidden",
         }}
         onClick={(e) => e.stopPropagation()}

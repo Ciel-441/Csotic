@@ -10,14 +10,20 @@ import { CustomDialog } from "./GlobalDialog";
 import { 
   filesystem, 
   git, 
-  system, 
   models,
-  collaboration 
+  plugins as ipcPlugins
 } from "../services/ipc";
 import { BrainSidebarPanel } from "./brain/BrainSidebarPanel";
 import { ExtensionsPanel } from "./ExtensionsPanel";
+import { ClaudeCodePanel } from "./ClaudeCodePanel";
+import { ExtensionWebviewHost } from "./ExtensionWebviewHost";
+import { ClaudeIcon } from "./ClaudeIcon";
+import { AccountFlyout } from "./AccountFlyout";
+import type { AuthSession } from "../types/auth";
 import { getFileIcon } from "./editor/EditorTabBar";
 import { 
+  User as UserIcon,
+  Settings as SettingsIcon,
   Folder, 
   FolderPlus, 
   FilePlus, 
@@ -26,11 +32,8 @@ import {
   GitBranch, 
   MessageSquare, 
   Brain, 
-  Activity, 
   Puzzle, 
-  Users,
   Plus, 
-  X, 
   Sparkles, 
   UploadCloud, 
   DownloadCloud, 
@@ -41,8 +44,8 @@ import {
   ChevronRight, 
   ChevronDown,
   FolderOpen,
-  FileCode,
-  Check
+  Pin,
+  MoreHorizontal,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -72,18 +75,11 @@ interface SidebarProps {
   onOpenGraph?: () => void;
   onOpenExtension?: (ext: any) => void;
   theme?: "dark" | "light";
+  session?: AuthSession | null;
+  onOpenAuthModal?: () => void;
+  onOpenSettings?: () => void;
+  onLogout?: () => void;
 }
-
-const navItems = [
-  { id: "explorer", label: "Explorer", icon: <Folder size={18} /> },
-  { id: "search", label: "Search", icon: <Search size={18} /> },
-  { id: "git", label: "Source Control", icon: <GitBranch size={18} /> },
-  { id: "chat", label: "AI Pair Programmer", icon: <MessageSquare size={18} /> },
-  { id: "memory", label: "Obsidian Brain", icon: <Brain size={18} /> },
-  { id: "collaboration", label: "Live Collaboration", icon: <Users size={18} /> },
-  { id: "diagnostics", label: "Diagnostics", icon: <Activity size={18} /> },
-  { id: "plugins", label: "Extensions", icon: <Puzzle size={18} /> },
-];
 
 export function Sidebar({
   visible,
@@ -106,19 +102,182 @@ export function Sidebar({
   onNewConversation,
   openTabs = [],
   activeTabId = null,
-  onCloseTab,
-  onSelectTab,
+  onCloseTab: _onCloseTab,
+  onSelectTab: _onSelectTab,
   activeModel,
   onOpenGraph,
   onOpenExtension,
   theme = "dark",
+  session = null,
+  onOpenAuthModal,
+  onOpenSettings,
+  onLogout,
 }: SidebarProps) {
   const activeTab = openTabs.find((t) => t.id === activeTabId) || null;
 
+  const [accountFlyoutOpen, setAccountFlyoutOpen] = useState(false);
+  const [installedExtensions, setInstalledExtensions] = useState<any[]>([]);
+  const [claudeMode, setClaudeMode] = useState<"extension" | "sessions">("extension");
+
+  useEffect(() => {
+    let mounted = true;
+    const loadExtensions = async () => {
+      try {
+        const res: any = await ipcPlugins.getInstalledExtensions();
+        if (mounted && res?.data?.extensions && Array.isArray(res.data.extensions)) {
+          setInstalledExtensions(res.data.extensions);
+        }
+      } catch (e) {
+        console.warn("Failed to query installed extensions in Sidebar:", e);
+      }
+    };
+    void loadExtensions();
+    const handleExtChange = () => { void loadExtensions(); };
+    window.addEventListener("csotic:extensions-changed", handleExtChange);
+    return () => {
+      mounted = false;
+      window.removeEventListener("csotic:extensions-changed", handleExtChange);
+    };
+  }, []);
+
+  const hasClaude = useMemo(() => {
+    return installedExtensions.some(
+      (ext) =>
+        ext.id?.toLowerCase().includes("claude") ||
+        ext.name?.toLowerCase().includes("claude") ||
+        ext.displayName?.toLowerCase().includes("claude")
+    );
+  }, [installedExtensions]);
+
+  const navItems = useMemo(() => {
+    const items: Array<{ id: string; label: string; icon: React.ReactNode; accent?: string }> = [
+      { id: "explorer", label: "Explorer", icon: <Folder size={18} /> },
+      { id: "search", label: "Search", icon: <Search size={18} /> },
+      { id: "git", label: "Source Control", icon: <GitBranch size={18} /> },
+      { id: "chat", label: "AI Pair Programmer", icon: <MessageSquare size={18} /> },
+      { id: "memory", label: "Obsidian Brain", icon: <Brain size={18} /> },
+    ];
+
+    if (hasClaude) {
+      items.push({
+        id: "claude-code",
+        label: "Claude Code",
+        icon: <ClaudeIcon size={18} />,
+        accent: "#da7756",
+      });
+    }
+
+    items.push({ id: "plugins", label: "Extensions", icon: <Puzzle size={18} /> });
+    return items;
+  }, [hasClaude]);
+
+  const renderBottomRail = () => (
+    <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: "100%", paddingBottom: 4 }}>
+      {/* Account Anchor Button */}
+      <div style={{ position: "relative" }}>
+        <button
+          onClick={() => setAccountFlyoutOpen(!accountFlyoutOpen)}
+          title={session?.user ? `Signed in as ${session.user.name || session.user.username}` : "Accounts & Sign In"}
+          aria-label="Accounts"
+          style={{
+            width: 34,
+            height: 34,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: "50%",
+            background: session?.user ? "rgba(239, 68, 68, 0.15)" : "transparent",
+            border: session?.user ? "1.5px solid rgba(239, 68, 68, 0.6)" : "1px solid var(--color-border-subtle)",
+            color: session?.user ? "#ef4444" : "var(--color-text-secondary)",
+            cursor: "pointer",
+            position: "relative",
+            transition: "all 0.15s ease",
+            padding: 0,
+            overflow: "visible",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = "#ef4444";
+            e.currentTarget.style.transform = "scale(1.05)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = session?.user ? "rgba(239, 68, 68, 0.6)" : "var(--color-border-subtle)";
+            e.currentTarget.style.transform = "scale(1)";
+          }}
+        >
+          {session?.user?.avatarUrl ? (
+            <img
+              src={session.user.avatarUrl}
+              alt={session.user.name || "User"}
+              style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }}
+            />
+          ) : (
+            <UserIcon size={17} />
+          )}
+
+          {/* Online / Active status badge dot */}
+          {session?.user && (
+            <span
+              style={{
+                position: "absolute",
+                bottom: -1,
+                right: -1,
+                width: 9,
+                height: 9,
+                borderRadius: "50%",
+                background: "#22c55e",
+                border: "2px solid var(--color-bg-base)",
+                boxShadow: "0 0 4px #22c55e",
+              }}
+            />
+          )}
+        </button>
+
+        <AccountFlyout
+          isOpen={accountFlyoutOpen}
+          onClose={() => setAccountFlyoutOpen(false)}
+          session={session}
+          onOpenAuthModal={() => {
+            setAccountFlyoutOpen(false);
+            onOpenAuthModal?.();
+          }}
+          onOpenSettings={() => {
+            setAccountFlyoutOpen(false);
+            onOpenSettings?.();
+          }}
+          onLogout={() => {
+            setAccountFlyoutOpen(false);
+            onLogout?.();
+          }}
+        />
+      </div>
+
+      {/* Settings Gear Button */}
+      {onOpenSettings && (
+        <button
+          onClick={onOpenSettings}
+          title="Settings"
+          aria-label="Settings"
+          className="sidebar__nav-item"
+          style={{
+            width: 36,
+            height: 36,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: "var(--radius-md)",
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          <SettingsIcon size={18} />
+        </button>
+      )}
+    </div>
+  );
+
   if (!visible) {
     return (
-      <aside className="sidebar sidebar--collapsed" style={{ width: 48 }}>
-        <nav className="sidebar__nav">
+      <aside className="sidebar sidebar--collapsed" style={{ width: 48, height: "100%", display: "flex", flexDirection: "column" }}>
+        <nav className="sidebar__nav" style={{ width: 48, flexShrink: 0, height: "100%", display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 0", gap: 4, background: "var(--color-bg-base)", borderRight: "1px solid var(--color-border-subtle)" }}>
           {navItems.map((item) => (
             <button
               key={item.id}
@@ -126,10 +285,14 @@ export function Sidebar({
               onClick={() => onViewChange(item.id)}
               title={item.label}
               aria-label={item.label}
+              style={{
+                color: item.accent,
+              }}
             >
               {item.icon}
             </button>
           ))}
+          {renderBottomRail()}
         </nav>
       </aside>
     );
@@ -148,46 +311,53 @@ export function Sidebar({
       }}
     >
       {/* Activity Bar Icons */}
-      <nav className="sidebar__nav" style={{ width: 48, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 0", gap: 4, background: "var(--color-bg-base)", borderRight: "1px solid var(--color-border-subtle)" }}>
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            className={`sidebar__nav-item ${activeView === item.id ? "sidebar__nav-item--active" : ""}`}
-            onClick={() => onViewChange(item.id)}
-            title={item.label}
-            aria-label={item.label}
-            style={{ width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "var(--radius-md)" }}
-          >
-            {item.icon}
-          </button>
-        ))}
+      <nav className="sidebar__nav" style={{ width: 48, flexShrink: 0, height: "100%", display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 0", gap: 4, background: "var(--color-bg-base)", borderRight: "1px solid var(--color-border-subtle)" }}>
+        {navItems.map((item) => {
+          const isActive = activeView === item.id;
+          return (
+            <button
+              key={item.id}
+              className={`sidebar__nav-item ${isActive ? "sidebar__nav-item--active" : ""}`}
+              onClick={() => onViewChange(item.id)}
+              title={item.label}
+              aria-label={item.label}
+              style={{
+                width: 36,
+                height: 36,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "var(--radius-md)",
+                color: isActive && item.accent ? item.accent : (item.accent && !isActive ? item.accent : undefined),
+                filter: item.accent && isActive ? "drop-shadow(0 0 6px rgba(218, 119, 86, 0.5))" : undefined,
+              }}
+            >
+              {item.icon}
+            </button>
+          );
+        })}
+        {renderBottomRail()}
       </nav>
 
       {/* Primary Sidebar Content Pane */}
       <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", background: "var(--color-bg-surface)" }}>
-        {activeView !== "plugins" && (
+        {activeView !== "plugins" && activeView !== "claude-code" && (
           <div className="sidebar__section-title" style={{ padding: "8px 12px", borderBottom: "1px solid var(--color-border-subtle)", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--color-text-secondary)" }}>
-            {activeView === "explorer" && "Explorer"}
+            {activeView === "explorer" && "EXPLORER"}
             {activeView === "search" && "Search & Replace"}
             {activeView === "git" && "Source Control"}
             {activeView === "chat" && "Conversations"}
             {activeView === "memory" && "Obsidian Brain & Vault"}
-            {activeView === "collaboration" && "Live P2P Collaboration"}
-            {activeView === "diagnostics" && "System Diagnostics"}
           </div>
         )}
 
-        <div className="sidebar__content" style={{ flex: 1, overflowY: activeView === "plugins" ? "hidden" : "auto", display: "flex", flexDirection: "column" }} key={activeView}>
+        <div className="sidebar__content" style={{ flex: 1, overflowY: activeView === "plugins" || activeView === "claude-code" ? "hidden" : "auto", display: "flex", flexDirection: "column" }} key={activeView}>
           {activeView === "explorer" && (
             <ExplorerPanel
               activeProject={activeProject}
               recentProjects={recentProjects}
-              onOpenProject={onOpenProject}
               onOpenFile={onOpenFile}
-              openTabs={openTabs}
-              activeTabId={activeTabId}
-              onCloseTab={onCloseTab}
-              onSelectTab={onSelectTab}
+              onOpenProject={onOpenProject}
             />
           )}
           {activeView === "search" && <SearchPanel activeProject={activeProject} onOpenFile={onOpenFile} />}
@@ -216,8 +386,90 @@ export function Sidebar({
               theme={theme}
             />
           )}
-          {activeView === "diagnostics" && <DiagnosticsPanel />}
-          {activeView === "collaboration" && <CollaborationPanel />}
+          {activeView === "claude-code" && (
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", overflow: "hidden" }}>
+              {/* Dual-Mode Selector */}
+              <div
+                style={{
+                  display: "flex",
+                  borderBottom: theme === "light" ? "1px solid #e2e8f0" : "1px solid var(--color-border-default)",
+                  background: theme === "light" ? "#f8fafc" : "#18181b",
+                  padding: "6px 10px",
+                  gap: 6,
+                  userSelect: "none",
+                }}
+              >
+                <button
+                  onClick={() => setClaudeMode("extension")}
+                  style={{
+                    flex: 1,
+                    padding: "5px 8px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    borderRadius: 5,
+                    border: "none",
+                    background: claudeMode === "extension"
+                      ? (theme === "light" ? "rgba(217, 119, 6, 0.15)" : "rgba(217, 119, 6, 0.22)")
+                      : (theme === "light" ? "rgba(0, 0, 0, 0.04)" : "rgba(255, 255, 255, 0.03)"),
+                    color: claudeMode === "extension"
+                      ? "#d97706"
+                      : (theme === "light" ? "#475569" : "#9ca3af"),
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  Live Webview (Host)
+                </button>
+                <button
+                  onClick={() => setClaudeMode("sessions")}
+                  style={{
+                    flex: 1,
+                    padding: "5px 8px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    borderRadius: 5,
+                    border: "none",
+                    background: claudeMode === "sessions"
+                      ? (theme === "light" ? "rgba(0, 0, 0, 0.08)" : "rgba(255, 255, 255, 0.1)")
+                      : (theme === "light" ? "rgba(0, 0, 0, 0.04)" : "rgba(255, 255, 255, 0.03)"),
+                    color: claudeMode === "sessions"
+                      ? (theme === "light" ? "#0f172a" : "#ffffff")
+                      : (theme === "light" ? "#475569" : "#9ca3af"),
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  Session Scanner
+                </button>
+              </div>
+
+              {/* View Body */}
+              <div style={{ flex: 1, overflow: "hidden" }}>
+                {claudeMode === "extension" ? (
+                  <ExtensionWebviewHost
+                    viewId="claudeVSCodeSidebar"
+                    extensionId="Anthropic.claude-code"
+                    title="Claude Code"
+                    workspaceRoot={activeProject?.path}
+                    theme={theme}
+                  />
+                ) : (
+                  <ClaudeCodePanel
+                    activeProject={activeProject}
+                    activeFilePath={activeTab?.path}
+                    onOpenFile={onOpenFile}
+                    onOpenExtension={(extId) => {
+                      const ext = installedExtensions.find((e) => e.id === extId);
+                      if (ext && onOpenExtension) onOpenExtension(ext);
+                    }}
+                    onOpenTerminal={(cmd?: string) => {
+                      window.dispatchEvent(new CustomEvent("csotic:open-terminal", { detail: { cmd: cmd || "claude" } }));
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          )}
           {activeView === "plugins" && (
             <ExtensionsPanel 
               onOpenExtension={onOpenExtension} 
@@ -250,27 +502,20 @@ interface ContextMenuState {
 
 function ExplorerPanel({
   activeProject,
-  recentProjects,
-  onOpenProject,
+  recentProjects: _recentProjects = [],
   onOpenFile,
-  openTabs = [],
-  activeTabId = null,
-  onCloseTab,
-  onSelectTab,
+  onOpenProject,
 }: {
   activeProject: ProjectInfo | null;
-  recentProjects: ProjectInfo[];
-  onOpenProject: (path: string) => void;
+  recentProjects?: ProjectInfo[];
   onOpenFile: (path: string) => void;
-  openTabs?: EditorTab[];
-  activeTabId?: string | null;
-  onCloseTab?: (tabId: string, e: React.MouseEvent) => void;
-  onSelectTab?: (tabId: string) => void;
+  onOpenProject: (path: string) => void;
 }) {
-  const [projectPath, setProjectPath] = useState("");
+  const [_projectPath, setProjectPath] = useState("");
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [outlineOpen, setOutlineOpen] = useState(false);
 
   useEffect(() => {
     if (activeProject) {
@@ -460,82 +705,23 @@ function ExplorerPanel({
   const handleBrowse = async () => {
     const res = await filesystem.selectFolder();
     if (res.success && res.data && (res.data as any).path) {
-      setProjectPath((res.data as any).path);
-      onOpenProject((res.data as any).path);
-    }
-  };
-
-  const handleOpenFileBrowse = async () => {
-    const res = await filesystem.openFileDialog();
-    if (res.success && res.data) {
-      const data = res.data as any;
-      if (data.path) {
-        onOpenFile(data.path);
-      }
-    }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (projectPath.trim()) {
-      onOpenProject(projectPath.trim());
-      setProjectPath("");
+      const selectedPath = (res.data as any).path;
+      setProjectPath(selectedPath);
+      onOpenProject(selectedPath);
     }
   };
 
   if (activeProject) {
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%", color: "var(--color-text-secondary)", position: "relative" }}>
-        {/* Open Editors section */}
-        {openTabs.length > 0 && (
-          <div style={{ borderBottom: "1px solid var(--color-border-subtle)", paddingBottom: 4 }}>
-            <div style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-tertiary)", padding: "6px 12px 2px" }}>
-              Open Editors
-            </div>
-            {openTabs.map((tab) => {
-              const isActive = tab.id === activeTabId;
-              const name = tab.title || tab.path.split(/[/\\]/).pop() || "untitled";
-              return (
-                <div
-                  key={tab.id}
-                  onClick={() => onSelectTab?.(tab.id)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "3px 12px",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    background: isActive ? "rgba(239, 68, 68, 0.12)" : "transparent",
-                    color: isActive ? "var(--color-text-primary)" : "var(--color-text-secondary)",
-                  }}
-                  className="file-tree__item"
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                    {getFileIcon(name)}
-                    <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
-                    {tab.isDirty && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#ef4444" }} />}
-                  </div>
-                  {onCloseTab && (
-                    <button
-                      onClick={(e) => onCloseTab(tab.id, e)}
-                      style={{ background: "transparent", border: "none", color: "inherit", opacity: 0.5, cursor: "pointer", padding: 0 }}
-                      title="Close"
-                    >
-                      <X size={12} />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
         {/* Project Header Bar with File Actions */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", borderBottom: "1px solid var(--color-border-subtle)", background: "rgba(0,0,0,0.1)" }}>
-          <span style={{ fontWeight: 700, color: "var(--color-text-primary)", fontSize: "11px", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {activeProject.name}
-          </span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", borderBottom: "1px solid var(--color-border-subtle)", background: "rgba(0,0,0,0.15)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden", minWidth: 0 }}>
+            <ChevronDown size={13} style={{ color: "var(--color-text-secondary)", flexShrink: 0 }} />
+            <span style={{ fontWeight: 700, color: "var(--color-text-primary)", fontSize: "11px", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", letterSpacing: "0.5px" }}>
+              {activeProject.name}
+            </span>
+          </div>
           <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
             <button className="btn btn--icon" onClick={() => handleCreateFile()} title="New File" style={{ width: 22, height: 22, padding: 0 }}>
               <FilePlus size={13} />
@@ -546,6 +732,9 @@ function ExplorerPanel({
             <button className="btn btn--icon" onClick={handleRefresh} title="Refresh Explorer" style={{ width: 22, height: 22, padding: 0 }}>
               <RefreshCw size={13} />
             </button>
+            <button className="btn btn--icon" onClick={() => setFileTree((prev) => prev.map((n) => ({ ...n, expanded: false })))} title="Collapse All Folders" style={{ width: 22, height: 22, padding: 0 }}>
+              <Folder size={12} />
+            </button>
           </div>
         </div>
 
@@ -555,6 +744,36 @@ function ExplorerPanel({
             <div style={{ padding: "12px", fontSize: "12px", color: "var(--color-text-tertiary)" }}>Loading file tree…</div>
           ) : (
             renderTree(fileTree)
+          )}
+        </div>
+
+        {/* OUTLINE Accordion Section */}
+        <div style={{ borderTop: "1px solid var(--color-border-subtle)", marginTop: "auto" }}>
+          <div
+            onClick={() => setOutlineOpen(!outlineOpen)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "6px 12px",
+              cursor: "pointer",
+              fontSize: "11px",
+              fontWeight: 700,
+              color: "var(--color-text-secondary)",
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+              background: "rgba(0, 0, 0, 0.15)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {outlineOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              <span>Outline</span>
+            </div>
+          </div>
+          {outlineOpen && (
+            <div style={{ padding: "8px 14px", fontSize: "11px", color: "var(--color-text-tertiary)", fontStyle: "italic" }}>
+              No symbols found in active file.
+            </div>
           )}
         </div>
 
@@ -611,175 +830,44 @@ function ExplorerPanel({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", color: "var(--color-text-secondary)" }}>
-      {/* Open Editors section even when no project is active */}
-      {openTabs.length > 0 && (
-        <div style={{ borderBottom: "1px solid var(--color-border-subtle)", paddingBottom: 4 }}>
-          <div style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-tertiary)", padding: "6px 12px 2px" }}>
-            Open Editors
-          </div>
-          {openTabs.map((tab) => {
-            const isActive = tab.id === activeTabId;
-            const name = tab.title || tab.path.split(/[/\\]/).pop() || "untitled";
-            return (
-              <div
-                key={tab.id}
-                onClick={() => onSelectTab?.(tab.id)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "3px 12px",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                  background: isActive ? "rgba(239, 68, 68, 0.12)" : "transparent",
-                  color: isActive ? "var(--color-text-primary)" : "var(--color-text-secondary)",
-                }}
-                className="file-tree__item"
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                  {getFileIcon(name)}
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {name}
-                  </span>
-                  {tab.isDirty && (
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--color-accent-primary)" }} />
-                  )}
-                </div>
-                {onCloseTab && (
-                  <button
-                    className="btn btn--icon"
-                    onClick={(e) => onCloseTab(tab.id, e)}
-                    style={{ width: 16, height: 16, padding: 0, opacity: 0.6 }}
-                  >
-                    <X size={11} />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "12px", gap: "16px", overflowY: "auto" }}>
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <label htmlFor="project-path" style={{ fontSize: "11px", textTransform: "uppercase", fontWeight: 700, color: "var(--color-text-tertiary)", letterSpacing: "0.5px" }}>
-              Open Workspace
-            </label>
-          </div>
-          <div style={{ display: "flex", gap: "6px" }}>
-            <input
-              id="project-path"
-              className="input"
-              type="text"
-              placeholder="Enter or paste folder path..."
-              value={projectPath}
-              onChange={(e) => setProjectPath(e.target.value)}
-              style={{
-                flex: 1,
-                fontSize: "12px",
-                padding: "6px 8px",
-                background: "rgba(0, 0, 0, 0.4)",
-                border: "1px solid rgba(239, 68, 68, 0.2)",
-                borderRadius: 4,
-                color: "#ffffff",
-                outline: "none",
-              }}
-            />
-            <button
-              className="btn btn--secondary"
-              type="button"
-              onClick={handleBrowse}
-              style={{ padding: "0 10px", fontSize: "11.5px", height: 32, borderRadius: 4 }}
-            >
-              Browse
-            </button>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <button
-              className="btn btn--primary"
-              type="button"
-              onClick={() => {
-                if (projectPath.trim()) {
-                  onOpenProject(projectPath.trim());
-                  setProjectPath("");
-                } else {
-                  void handleBrowse();
-                }
-              }}
-              style={{
-                fontSize: "12px",
-                fontWeight: 600,
-                height: 32,
-                borderRadius: 4,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-              }}
-            >
-              <FolderOpen size={13} />
-              <span>Open Folder</span>
-            </button>
-            <button
-              className="btn btn--secondary"
-              type="button"
-              onClick={() => void handleOpenFileBrowse()}
-              style={{
-                fontSize: "12px",
-                fontWeight: 500,
-                height: 32,
-                borderRadius: 4,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-              }}
-            >
-              <FileCode size={13} />
-              <span>Open File</span>
-            </button>
-          </div>
-        </form>
-
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          <div style={{ fontSize: "11px", textTransform: "uppercase", fontWeight: 700, color: "var(--color-text-tertiary)", marginBottom: "8px" }}>
-            Recent Projects
-          </div>
-          {recentProjects.length === 0 ? (
-            <div style={{ fontSize: "12px", color: "var(--color-text-tertiary)", fontStyle: "italic" }}>
-              No recent projects found.
-            </div>
-          ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            {recentProjects.map((p, idx) => (
-              <button
-                key={idx}
-                className="btn btn--secondary"
-                style={{
-                  justifyContent: "flex-start",
-                  textAlign: "left",
-                  padding: "8px",
-                  height: "auto",
-                  width: "100%",
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                }}
-                onClick={() => onOpenProject(p.path)}
-              >
-                <span style={{ fontWeight: 600, color: "var(--color-text-primary)", fontSize: "12px" }}>
-                  {p.name}
-                </span>
-                <span style={{ fontSize: "10px", color: "var(--color-text-tertiary)", wordBreak: "break-all" }}>
-                  {p.path.replace(/^\\\\?\\/, "")}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-        </div>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: "24px 16px", color: "var(--color-text-secondary)" }}>
+      <div style={{ fontSize: "11px", textTransform: "uppercase", fontWeight: 700, color: "var(--color-text-tertiary)", letterSpacing: "0.5px", marginBottom: "8px" }}>
+        No Folder Opened
       </div>
+      <p style={{ fontSize: "12px", color: "#8b949e", margin: "0 0 16px 0", lineHeight: 1.45 }}>
+        You have not yet opened a folder.
+      </p>
+      <button
+        type="button"
+        onClick={handleBrowse}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          height: 32,
+          padding: "0 14px",
+          background: "rgba(239, 68, 68, 0.15)",
+          border: "1px solid rgba(239, 68, 68, 0.35)",
+          borderRadius: 6,
+          color: "#fca5a5",
+          fontSize: "12px",
+          fontWeight: 600,
+          cursor: "pointer",
+          transition: "all 0.15s ease",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "#ef4444";
+          e.currentTarget.style.color = "#ffffff";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "rgba(239, 68, 68, 0.15)";
+          e.currentTarget.style.color = "#fca5a5";
+        }}
+      >
+        <FolderOpen size={14} />
+        <span>Open Folder</span>
+      </button>
     </div>
   );
 }
@@ -902,7 +990,9 @@ function SearchPanel({ activeProject, onOpenFile }: { activeProject: ProjectInfo
           <div style={{ padding: "12px", color: "var(--color-text-tertiary)", fontSize: "12px" }}>Searching workspace…</div>
         ) : !query.trim() ? (
           <div className="empty-state" style={{ padding: "16px" }}>
-            <div className="empty-state__icon">🔍</div>
+            <div className="empty-state__icon" style={{ display: "flex", justifyContent: "center" }}>
+              <Search size={24} style={{ color: "var(--color-text-tertiary)", opacity: 0.5 }} />
+            </div>
             <div className="empty-state__title" style={{ fontSize: "12px" }}>Search in Project</div>
             <div className="empty-state__description" style={{ fontSize: "11px" }}>
               Search across all files with instant live line matching.
@@ -1075,9 +1165,12 @@ function GitPanel({ activeProject, onOpenFile, activeModel }: { activeProject: P
       if (res.success && res.data) {
         const msg = ((res.data as any).response || "").trim().replace(/^["']|["']$/g, "");
         setCommitMessage(msg);
+      } else if (!res.success) {
+        await CustomDialog.alert(`Failed to generate commit message: ${res.error?.message || "Check your API key and connection."}`);
       }
     } catch (err) {
       console.error(err);
+      await CustomDialog.alert(`Error generating commit message: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setIsGeneratingMessage(false);
     }
@@ -1399,8 +1492,9 @@ function ChatListPlaceholder({
 
   return (
     <div style={{ padding: "8px", display: "flex", flexDirection: "column", height: "100%", gap: 6 }}>
-      <button className="btn btn--primary" style={{ width: "100%", fontSize: "12px" }} onClick={onNewConversation}>
-        + New Conversation
+      <button className="btn btn--primary" style={{ width: "100%", fontSize: "12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }} onClick={onNewConversation}>
+        <Plus size={13} />
+        <span>New Conversation</span>
       </button>
       <input
         className="input"
@@ -1430,22 +1524,24 @@ function ChatListPlaceholder({
                 position: "relative",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                <span>{conv.pinned ? "📌" : "💬"}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden", minWidth: 0, flex: 1 }}>
+                {conv.pinned && (
+                  <Pin size={11} style={{ color: "var(--color-accent-primary)", flexShrink: 0, transform: "rotate(45deg)" }} />
+                )}
                 <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: isActive ? 600 : 400 }}>
                   {conv.title}
                 </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     setOpenMenuId(openMenuId === conv.id ? null : conv.id);
                   }}
-                  style={{ background: "transparent", border: "none", color: "inherit", opacity: 0.6, cursor: "pointer", fontSize: "11px" }}
+                  style={{ background: "transparent", border: "none", color: "inherit", opacity: 0.6, cursor: "pointer", display: "flex", alignItems: "center", padding: "2px" }}
                   title="Options"
                 >
-                  •••
+                  <MoreHorizontal size={13} />
                 </button>
               </div>
 
@@ -1519,129 +1615,6 @@ function ChatListPlaceholder({
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================================
-   5. Diagnostics, Collaboration & Plugins
-   ========================================================================= */
-
-function DiagnosticsPanel() {
-  const [data, setData] = useState<any>(null);
-
-  useEffect(() => {
-    system.diagnostics().then((res) => {
-      if (res.success) setData(res.data);
-    });
-  }, []);
-
-  if (!data) return <div style={{ padding: "12px", color: "var(--color-text-tertiary)" }}>Loading diagnostics...</div>;
-
-  return (
-    <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: "10px", fontSize: "12px" }}>
-      <div><strong>Csotic Version:</strong> {data.version}</div>
-      <div><strong>Platform:</strong> {data.platform} ({data.arch})</div>
-      <div><strong>Database Status:</strong> {data.db_status}</div>
-      <div><strong>Active Project:</strong> {data.active_project || "None"}</div>
-      <div><strong>Active Model:</strong> {data.active_model || "None"}</div>
-    </div>
-  );
-}
-
-function CollaborationPanel() {
-  const [sessionId, setSessionId] = useState<string>("");
-  const [joinInput, setJoinInput] = useState<string>("");
-  const [copied, setCopied] = useState(false);
-  const [status, setStatus] = useState<string>("Ready to start or join a peer session.");
-
-  const handleHost = async () => {
-    setStatus("Initializing host session...");
-    const res = await collaboration.startSession();
-    if (res.success && res.data) {
-      const id = (res.data as any).session_id || `forge-p2p-${Math.random().toString(36).substring(2, 9)}`;
-      setSessionId(id);
-      setStatus(`Hosting active session: ${id}`);
-    } else {
-      const fallbackId = `forge-p2p-${Math.random().toString(36).substring(2, 9)}`;
-      setSessionId(fallbackId);
-      setStatus(`Hosting local session: ${fallbackId}`);
-    }
-  };
-
-  const handleJoin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!joinInput.trim()) return;
-    setStatus(`Connecting to peer session: ${joinInput.trim()}...`);
-    const res = await collaboration.joinSession(joinInput.trim());
-    if (res.success) {
-      setStatus(`Connected to session: ${joinInput.trim()}`);
-    } else {
-      setStatus(`Connected to local peer channel for: ${joinInput.trim()}`);
-    }
-  };
-
-  const handleCopy = () => {
-    if (sessionId) {
-      navigator.clipboard.writeText(sessionId);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  return (
-    <div style={{ padding: "12px", fontSize: "12px", display: "flex", flexDirection: "column", gap: 12 }}>
-      <div>
-        <div style={{ fontWeight: 600, color: "var(--color-text-primary)", marginBottom: 4 }}>Real-Time P2P Pairing</div>
-        <p style={{ color: "var(--color-text-tertiary)", fontSize: "11.5px", lineHeight: 1.45 }}>
-          Share code, cursor states, and edits live with another developer.
-        </p>
-      </div>
-
-      {/* Host session */}
-      <div style={{ background: "var(--color-item-hover, rgba(255,255,255,0.03))", border: "1px solid var(--color-border-subtle)", borderRadius: "var(--radius-sm)", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontWeight: 600, fontSize: "11.5px", color: "var(--color-text-primary)" }}>Host a Session</div>
-        {!sessionId ? (
-          <button className="btn btn--primary" onClick={handleHost} style={{ fontSize: "11.5px" }}>
-            Start Pairing Session
-          </button>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ fontSize: "11px", color: "var(--color-text-tertiary)" }}>Session Code:</div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <input
-                className="input"
-                readOnly
-                value={sessionId}
-                style={{ fontSize: "11px", padding: "4px 8px", background: "var(--color-input-bg)" }}
-              />
-              <button className="btn btn--secondary" onClick={handleCopy} style={{ fontSize: "11px", height: 26, padding: "0 8px", flexShrink: 0 }}>
-                {copied ? <Check size={12} style={{ color: "var(--color-success)" }} /> : <Copy size={12} />}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Join session */}
-      <form onSubmit={handleJoin} style={{ background: "var(--color-item-hover, rgba(255,255,255,0.03))", border: "1px solid var(--color-border-subtle)", borderRadius: "var(--radius-sm)", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontWeight: 600, fontSize: "11.5px", color: "var(--color-text-primary)" }}>Join Remote Session</div>
-        <input
-          className="input"
-          type="text"
-          placeholder="Paste Session ID..."
-          value={joinInput}
-          onChange={(e) => setJoinInput(e.target.value)}
-          style={{ fontSize: "11.5px", padding: "4px 8px" }}
-        />
-        <button className="btn btn--secondary" type="submit" disabled={!joinInput.trim()} style={{ fontSize: "11.5px" }}>
-          Join Session
-        </button>
-      </form>
-
-      <div style={{ fontSize: "11px", color: "var(--color-text-tertiary)", fontStyle: "italic", marginTop: 4 }}>
-        Status: {status}
       </div>
     </div>
   );

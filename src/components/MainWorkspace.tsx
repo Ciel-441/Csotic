@@ -1,23 +1,43 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { terminal } from "../services/ipc";
-import { ProjectInfo, EditorTab } from "../types/ipc";
-import { DiffViewer } from "./DiffViewer";
-import { MonacoCodeEditor, getLanguageFromPath } from "./editor/MonacoCodeEditor";
+import { useEffect, useMemo, useState, useCallback, lazy, Suspense } from "react";
+import { listen } from "../services/events";
+import { ProjectInfo, EditorTab, ModelMetadata } from "../types/ipc";
 import { EditorTabBar } from "./editor/EditorTabBar";
 import { Breadcrumbs } from "./editor/Breadcrumbs";
-import { InlineAICopilot } from "./editor/InlineAICopilot";
-import { LiveWebPreview } from "./editor/LiveWebPreview";
-import { MarkdownPreview } from "./editor/MarkdownPreview";
-import { BrainGraphView } from "./brain/BrainGraphView";
-import { ExtensionDetailView } from "./ExtensionDetailView";
-import { AiCoderSlidePanel } from "../features/chat";
-import { 
-  Sparkles, 
-  Search, 
-  Terminal, 
-  Code2, 
-  X, 
+import { getLanguageFromPath } from "./editor/languages";
+
+// Lazy-loaded heavy modules for instant startup & low RAM consumption
+const DiffViewer = lazy(() => import("./DiffViewer").then((m) => ({ default: m.DiffViewer })));
+const MonacoCodeEditor = lazy(() => import("./editor/MonacoCodeEditor").then((m) => ({ default: m.MonacoCodeEditor })));
+const InlineAICopilot = lazy(() => import("./editor/InlineAICopilot").then((m) => ({ default: m.InlineAICopilot })));
+const LiveWebPreview = lazy(() => import("./editor/LiveWebPreview").then((m) => ({ default: m.LiveWebPreview })));
+const MarkdownPreview = lazy(() => import("./editor/MarkdownPreview").then((m) => ({ default: m.MarkdownPreview })));
+const BrainGraphView = lazy(() => import("./brain/BrainGraphView").then((m) => ({ default: m.BrainGraphView })));
+const ExtensionDetailView = lazy(() => import("./ExtensionDetailView").then((m) => ({ default: m.ExtensionDetailView })));
+const ClaudeCodeSessionView = lazy(() => import("./ClaudeCodeSessionView").then((m) => ({ default: m.ClaudeCodeSessionView })));
+const AiCoderSlidePanel = lazy(() => import("../features/chat").then((m) => ({ default: m.AiCoderSlidePanel })));
+import { getSessionById, getStoredSessions } from "../services/claudeCodeSessions";
+import { WelcomeView } from "./WelcomeView";
+
+const EditorLoadingFallback = () => (
+  <div style={{
+    width: "100%",
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "var(--color-bg-base, #070203)",
+    color: "var(--color-text-muted, #71717a)",
+    fontSize: "12px",
+    gap: 8,
+  }}>
+    <div style={{ width: 14, height: 14, border: "2px solid #ef4444", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.6s linear infinite" }} />
+    <span>Loading editor...</span>
+  </div>
+);
+
+export { getLanguageFromPath };
+import {
+  X,
   ArrowLeftRight, 
   Eye, 
 } from "lucide-react";
@@ -34,6 +54,9 @@ interface MainWorkspaceProps {
   onViewChange: (view: string) => void;
   activeProject: ProjectInfo | null;
   activeModel: string | null;
+  modelsList?: ModelMetadata[];
+  onSelectModel?: (modelId: string) => void;
+  onOpenSettings?: () => void;
   activeFile: string | null;
   openTabs?: EditorTab[];
   activeTabId?: string | null;
@@ -68,11 +91,18 @@ interface MainWorkspaceProps {
   onDeleteConversation?: (id: number) => void;
   onOpenFile?: (path: string) => void;
   theme?: "dark" | "light";
+  recentProjects?: ProjectInfo[];
+  onOpenFolder?: () => void;
+  onRevealInExplorer?: () => void;
+  onOpenTerminal?: () => void;
+  onNewFile?: () => void;
+  onOpenFilePicker?: () => void;
+  onCursorChangeGlobal?: (line: number, col: number) => void;
 }
 
 export function MainWorkspace(props: MainWorkspaceProps) {
   const {
-    activeProject, activeModel,
+    activeProject, activeModel, modelsList, onSelectModel, onOpenSettings,
     openTabs = [], activeTabId = null, onSelectTab, onCloseTab, onCloseOthers, onCloseAll, onCloseSaved, onTabContentChange, onSaveTab, onSaveAsTab,
     isSplit = false, onToggleSplit,
     onOpenProject: _onOpenProject, conversationId, onConversationTitleChange, permissionProfile, attachedProjectPaths, onDetachProject: _onDetachProject, onPermissionProfileChange: _onPermissionProfileChange,
@@ -81,7 +111,14 @@ export function MainWorkspace(props: MainWorkspaceProps) {
     conversations = [], onSelectConversation, onNewConversation, onDeleteConversation,
     onOpenFile,
     theme = "dark",
-    onViewChange,
+    onViewChange: _onViewChange,
+    recentProjects = [],
+    onOpenFolder,
+    onRevealInExplorer,
+    onOpenTerminal,
+    onNewFile,
+    onOpenFilePicker,
+    onCursorChangeGlobal,
   } = props;
 
   const [cursorPos, setCursorPos] = useState({ line: 1, column: 1 });
@@ -126,6 +163,8 @@ export function MainWorkspace(props: MainWorkspaceProps) {
   const activeTab = openTabs.find((t) => t.id === activeTabId) || null;
   const isMarkdown = activeTab?.path.endsWith(".md") || false;
   const isHtml = activeTab?.path.endsWith(".html") || activeTab?.path.endsWith(".htm") || false;
+  // Preview only applies to previewable files; switching to a .ts tab must show code, not an HTML preview of it.
+  const showPreview = viewMode === "preview" && (isMarkdown || isHtml);
 
   // Compute right secondary pane tab for double panel side-by-side editing
   const rightTab = useMemo(() => {
@@ -158,17 +197,31 @@ export function MainWorkspace(props: MainWorkspaceProps) {
       if (disposed) stop();
       else unlisten = stop;
     });
+
+    const handleTogglePreview = () => {
+      setViewMode((cur) => (cur === "preview" ? "code" : "preview"));
+    };
+    window.addEventListener("csotic:toggle-preview", handleTogglePreview);
+
     return () => {
       disposed = true;
       unlisten?.();
+      window.removeEventListener("csotic:toggle-preview", handleTogglePreview);
     };
   }, [setCurrentDiff, setActiveRightTab]);
 
   const handleInlineAIAccept = (newCode: string) => {
     if (activeTab && onTabContentChange) {
-      if (inlineAIState.selectedText && activeTab.content) {
-        const updated = activeTab.content.replace(inlineAIState.selectedText, newCode);
-        onTabContentChange(activeTab.id, updated);
+      const content = activeTab.content || "";
+      const range = inlineAIState.range;
+      if (inlineAIState.selectedText && range) {
+        // Replace exactly the selected range (string.replace would hit the first identical snippet).
+        const lines = content.split("\n");
+        const offsetOf = (line: number, col: number) =>
+          lines.slice(0, line - 1).reduce((sum, l) => sum + l.length + 1, 0) + col - 1;
+        const start = offsetOf(range.startLineNumber, range.startColumn);
+        const end = offsetOf(range.endLineNumber, range.endColumn);
+        onTabContentChange(activeTab.id, content.slice(0, start) + newCode + content.slice(end));
       } else {
         onTabContentChange(activeTab.id, newCode);
       }
@@ -195,48 +248,6 @@ export function MainWorkspace(props: MainWorkspaceProps) {
     }
   };
 
-  const handleRunActiveFile = useCallback(async () => {
-    if (!activeTab) return;
-    const cleanPath = activeTab.path.replace(/\\/g, "/");
-    const fileName = cleanPath.split("/").pop() || "";
-    const ext = fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")).toLowerCase() : "";
-    const baseName = fileName.replace(/\.[^/.]+$/, "");
-    const cwd = activeProject?.path || ".";
-    const fileArg = fileName.includes(" ") ? `"${fileName}"` : fileName;
-    const outArg = baseName.includes(" ") ? `"${baseName}.exe"` : `${baseName}.exe`;
-
-    let runCmd = `node ${fileArg}`;
-    if (ext === ".c") {
-      runCmd = `gcc ${fileArg} -o ${outArg} && ${outArg}`;
-    } else if (ext === ".cpp" || ext === ".cc" || ext === ".cxx") {
-      runCmd = `g++ ${fileArg} -o ${outArg} && ${outArg}`;
-    } else if (ext === ".py") {
-      runCmd = `python ${fileArg}`;
-    } else if (ext === ".rs") {
-      runCmd = "cargo run";
-    } else if (ext === ".go") {
-      runCmd = `go run ${fileArg}`;
-    } else if (ext === ".java") {
-      runCmd = `java ${fileArg}`;
-    } else if (ext === ".ts") {
-      runCmd = `npx tsx ${fileArg}`;
-    } else if (ext === ".sh") {
-      runCmd = `bash ${fileArg}`;
-    } else if (ext === ".ps1") {
-      runCmd = `powershell -ExecutionPolicy Bypass -File ${fileArg}`;
-    }
-
-    // Toggle/open terminal bottom dock
-    const event = new KeyboardEvent("keydown", { ctrlKey: true, key: "`" });
-    window.dispatchEvent(event);
-
-    try {
-      await terminal.executeCommand(cwd, runCmd, true);
-    } catch (e) {
-      console.error("Run active file error:", e);
-    }
-  }, [activeTab, activeProject]);
-
   return (
     <main className="main-workspace" style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", overflow: "hidden", background: "var(--color-bg-base)", position: "relative" }}>
       {/* Top Tab Bar */}
@@ -254,12 +265,11 @@ export function MainWorkspace(props: MainWorkspaceProps) {
           activeViewMode={viewMode}
           onViewModeChange={setViewMode}
           hasPreviewableFile={isMarkdown || isHtml}
-          onRunCode={handleRunActiveFile}
         />
       )}
 
       {/* Breadcrumbs Navigation */}
-      {activeTab && (
+      {activeTab && activeTab.id !== "welcome" && activeTab.path !== "csotic://welcome" && (
         <Breadcrumbs
           filePath={activeTab.path}
           projectPath={activeProject?.path}
@@ -268,176 +278,78 @@ export function MainWorkspace(props: MainWorkspaceProps) {
 
       {/* Central Editor + AI Slide Layout */}
       <div style={{ flex: 1, display: "flex", width: "100%", height: "100%", overflow: "hidden", position: "relative" }}>
-        {openTabs.length === 0 ? (
-          /* IDE Welcome / Quick Action Dashboard */
-          <div className="ide-welcome-screen" style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "40px 20px",
-            color: "var(--color-text-secondary)",
-            userSelect: "none",
-          }}>
-            <img
-              src="/forge-logo.png"
-              alt="Csotic Logo"
-              style={{
-                width: 68,
-                height: 68,
-                borderRadius: "12px",
-                objectFit: "cover",
-                boxShadow: "0 0 30px rgba(239, 68, 68, 0.45)",
-                border: "2px solid rgba(239, 68, 68, 0.5)",
-                marginBottom: 16,
-              }}
-            />
-            <h2 style={{ fontSize: "20px", fontWeight: 800, color: "var(--color-text-primary)", marginBottom: 8, letterSpacing: "1px" }}>
-              CSOTIC ENGINEERING IDE
-            </h2>
-            <p style={{ fontSize: "13px", color: "var(--color-text-tertiary)", maxWidth: 440, textAlign: "center", lineHeight: 1.5, marginBottom: 24 }}>
-              Open files from the Explorer on the left, press Ctrl+N for a new file, or toggle the AI Coder Slide with Ctrl+L.
-            </p>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10, width: "100%", maxWidth: 460 }}>
-              <button
-                className="btn btn--secondary"
-                onClick={onOpenSearch}
-                style={{ padding: "12px 14px", justifyContent: "flex-start", gap: 10, fontSize: "12.5px" }}
-              >
-                <Search size={16} style={{ color: "#ef4444" }} />
-                <span>Quick Open File</span>
-                <span style={{ marginLeft: "auto", fontSize: "10.5px", opacity: 0.6 }}>Ctrl+P</span>
-              </button>
-
-              <button
-                className="btn btn--secondary"
-                onClick={onToggleAiSlide}
-                style={{ padding: "12px 14px", justifyContent: "flex-start", gap: 10, fontSize: "12.5px" }}
-              >
-                <Sparkles size={16} style={{ color: "#ef4444" }} />
-                <span>AI Coder Slide</span>
-                <span style={{ marginLeft: "auto", fontSize: "10.5px", opacity: 0.6 }}>Ctrl+L</span>
-              </button>
-
-              <button
-                className="btn btn--secondary"
-                onClick={() => onViewChange?.("git")}
-                style={{ padding: "12px 14px", justifyContent: "flex-start", gap: 10, fontSize: "12.5px" }}
-              >
-                <Code2 size={16} style={{ color: "#34d399" }} />
-                <span>Source Control</span>
-                <span style={{ marginLeft: "auto", fontSize: "10.5px", opacity: 0.6 }}>Git</span>
-              </button>
-
-              <button
-                className="btn btn--secondary"
-                onClick={() => {
-                  const event = new KeyboardEvent("keydown", { ctrlKey: true, key: "`" });
-                  window.dispatchEvent(event);
-                }}
-                style={{ padding: "12px 14px", justifyContent: "flex-start", gap: 10, fontSize: "12.5px" }}
-              >
-                <Terminal size={16} style={{ color: "#f59e0b" }} />
-                <span>Terminal & Output</span>
-                <span style={{ marginLeft: "auto", fontSize: "10.5px", opacity: 0.6 }}>Ctrl+`</span>
-              </button>
-            </div>
-          </div>
+        {(!activeTab || activeTab.id === "welcome" || activeTab.path === "csotic://welcome") ? (
+          <WelcomeView
+            onNewFile={onNewFile || (() => {})}
+            onOpenFile={onOpenFilePicker || (() => {})}
+            onOpenFolder={onOpenFolder || (() => {})}
+            onRevealInExplorer={onRevealInExplorer || (() => {})}
+            onOpenTerminal={onOpenTerminal || (() => {})}
+            onOpenSearch={onOpenSearch || (() => {})}
+            recentProjects={recentProjects}
+            onOpenProject={_onOpenProject}
+            activeProject={activeProject}
+            onOpenFileByPath={onOpenFile || (() => {})}
+            theme={theme}
+          />
         ) : (
           /* Main Editor Canvas / Split Panes */
           <div style={{ flex: 1, display: "flex", width: "100%", height: "100%", overflow: "hidden", position: "relative" }}>
             {/* Primary (Left) Editor Pane */}
+            {/* The tab bar drives the left pane; only the right pane needs its own file picker. */}
             <div style={{ flex: 1, height: "100%", overflow: "hidden", display: "flex", flexDirection: "column", minWidth: 0 }}>
-              {isSplit && (
-                <div style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  height: 34,
-                  background: "var(--color-panel-header-bg, var(--color-bg-surface))",
-                  borderBottom: "1px solid var(--color-border-subtle)",
-                  padding: "0 10px",
-                  fontSize: "11.5px",
-                  userSelect: "none",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, overflow: "hidden" }}>
-                    <span style={{ fontSize: "10px", padding: "1px 5px", background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", borderRadius: 3, fontWeight: 700 }}>
-                      LEFT
-                    </span>
-                    {openTabs.length > 0 ? (
-                      <select
-                        value={activeTab?.id || ""}
-                        onChange={(e) => onSelectTab?.(e.target.value)}
-                        style={{
-                          background: "var(--color-input-bg, var(--color-bg-base))",
-                          border: "1px solid var(--color-border-subtle)",
-                          color: "var(--color-text-primary)",
-                          fontSize: "11.5px",
-                          fontWeight: 600,
-                          borderRadius: 4,
-                          padding: "2px 8px",
-                          cursor: "pointer",
-                          maxWidth: 200,
-                          outline: "none",
-                        }}
-                        title="Switch left panel file"
-                      >
-                        {openTabs.map((t) => (
-                          <option key={t.id} value={t.id} style={{ background: "var(--color-bg-surface)", color: "var(--color-text-primary)" }}>
-                            {t.title || t.path.split(/[/\\]/).pop()} {t.isDirty ? "•" : ""}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>
-                        {activeTab?.title || activeTab?.path.split(/[/\\]/).pop() || "untitled"}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div style={{ flex: 1, height: isSplit ? "calc(100% - 34px)" : "100%", overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                {activeTab?.path?.startsWith("extension:") ? (
-                  <ExtensionDetailView 
-                    extension={activeTab.extensionData || { 
-                      id: activeTab.path.replace("extension:", ""), 
-                      displayName: activeTab.title.replace("Extension: ", ""), 
-                      namespace: activeTab.path.replace("extension:", "").split(".")[0] || "", 
-                      name: activeTab.path.replace("extension:", "").split(".")[1] || "" 
-                    }} 
-                  />
-                ) : activeTab?.path === "forge://brain-graph" ? (
-                  <BrainGraphView
-                    projectPath={activeProject?.path || ""}
-                    projectName={activeProject?.name}
-                    onOpenNode={onOpenFile}
-                    activeFilePath={activeTab?.path}
-                    theme={theme}
-                  />
-                ) : viewMode === "preview" && isMarkdown ? (
-                  <MarkdownPreview content={activeTab?.content || ""} onClose={() => setViewMode("code")} onOpenFile={onOpenFile} />
-                ) : viewMode === "preview" ? (
-                  <LiveWebPreview
-                    htmlContent={activeTab?.content || ""}
-                    defaultUrl={activeTab?.path ? `file://${activeTab.path}` : "http://localhost:5173"}
-                    onClose={() => setViewMode("code")}
-                  />
-                ) : (
-                  <MonacoCodeEditor
-                    filePath={activeTab?.path || "untitled.txt"}
-                    content={activeTab?.content || ""}
-                    isDirty={activeTab?.isDirty}
-                    theme={theme}
-                    onChange={(val) => activeTab && onTabContentChange?.(activeTab.id, val)}
-                    onSave={() => activeTab && onSaveTab?.(activeTab.id)}
-                    onSaveAs={() => activeTab && onSaveAsTab?.(activeTab.id)}
-                    onCursorChange={(line, column) => setCursorPos({ line, column })}
-                    onTriggerInlineAI={(selectedText, range) => setInlineAIState({ open: true, selectedText, range })}
-                  />
-                )}
+              <div style={{ flex: 1, height: "100%", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                <Suspense fallback={<EditorLoadingFallback />}>
+                  {activeTab?.path?.startsWith("extension:") ? (
+                    <ExtensionDetailView 
+                      extension={activeTab.extensionData || { 
+                        id: activeTab.path.replace("extension:", ""), 
+                        displayName: activeTab.title.replace("Extension: ", ""), 
+                        namespace: activeTab.path.replace("extension:", "").split(".")[0] || "", 
+                        name: activeTab.path.replace("extension:", "").split(".")[1] || "" 
+                      }} 
+                    />
+                  ) : activeTab?.path?.startsWith("claude-code:") ? (
+                    <ClaudeCodeSessionView
+                      session={activeTab.claudeSessionData || getSessionById(activeTab.path.replace("claude-code:", "")) || getStoredSessions()[0]}
+                      activeProject={activeProject}
+                      activeFilePath={activeTab?.path}
+                      onOpenFile={onOpenFile}
+                      onOpenTerminal={(cmd) => window.dispatchEvent(new CustomEvent("csotic:open-terminal", { detail: { cmd: cmd || "claude" } }))}
+                    />
+                  ) : activeTab?.path === "forge://brain-graph" ? (
+                    <BrainGraphView
+                      projectPath={activeProject?.path || ""}
+                      projectName={activeProject?.name}
+                      onOpenNode={onOpenFile}
+                      activeFilePath={activeTab?.path}
+                      theme={theme}
+                    />
+                  ) : showPreview && isMarkdown ? (
+                    <MarkdownPreview content={activeTab?.content || ""} onClose={() => setViewMode("code")} onOpenFile={onOpenFile} />
+                  ) : showPreview ? (
+                    <LiveWebPreview
+                      htmlContent={activeTab?.content || ""}
+                      defaultUrl={activeTab?.path ? `file://${activeTab.path}` : "http://localhost:5173"}
+                      onClose={() => setViewMode("code")}
+                    />
+                  ) : (
+                    <MonacoCodeEditor
+                      filePath={activeTab?.path || "untitled.txt"}
+                      content={activeTab?.content || ""}
+                      isDirty={activeTab?.isDirty}
+                      theme={theme}
+                      onChange={(val) => activeTab && onTabContentChange?.(activeTab.id, val)}
+                      onSave={() => activeTab && onSaveTab?.(activeTab.id)}
+                      onSaveAs={() => activeTab && onSaveAsTab?.(activeTab.id)}
+                      onCursorChange={(line, column) => {
+                        setCursorPos({ line, column });
+                        onCursorChangeGlobal?.(line, column);
+                      }}
+                      onTriggerInlineAI={(selectedText, range) => setInlineAIState({ open: true, selectedText, range })}
+                    />
+                  )}
+                </Suspense>
               </div>
             </div>
 
@@ -468,10 +380,6 @@ export function MainWorkspace(props: MainWorkspaceProps) {
                 }}>
                   {/* Active tab selector for Right Pane */}
                   <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1, overflow: "hidden" }}>
-                    <span style={{ fontSize: "10px", padding: "1px 5px", background: "rgba(239, 68, 68, 0.2)", color: "#ef4444", borderRadius: 3, fontWeight: 700 }}>
-                      RIGHT
-                    </span>
-
                     {/* Quick tab switcher dropdown for right pane */}
                     {openTabs.length > 0 && (
                       <select
@@ -537,7 +445,8 @@ export function MainWorkspace(props: MainWorkspaceProps) {
 
                 {/* Right Pane Body (Monaco Editor or Preview or Diff) */}
                 <div style={{ flex: 1, height: "calc(100% - 34px)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                  {rightTab?.path?.startsWith("extension:") ? (
+                  <Suspense fallback={<EditorLoadingFallback />}>
+                    {rightTab?.path?.startsWith("extension:") ? (
                     <ExtensionDetailView 
                       extension={rightTab.extensionData || { 
                         id: rightTab.path.replace("extension:", ""), 
@@ -545,6 +454,14 @@ export function MainWorkspace(props: MainWorkspaceProps) {
                         namespace: rightTab.path.replace("extension:", "").split(".")[0] || "", 
                         name: rightTab.path.replace("extension:", "").split(".")[1] || "" 
                       }} 
+                    />
+                  ) : rightTab?.path?.startsWith("claude-code:") ? (
+                    <ClaudeCodeSessionView
+                      session={rightTab.claudeSessionData || getSessionById(rightTab.path.replace("claude-code:", "")) || getStoredSessions()[0]}
+                      activeProject={activeProject}
+                      activeFilePath={rightTab?.path}
+                      onOpenFile={onOpenFile}
+                      onOpenTerminal={(cmd) => window.dispatchEvent(new CustomEvent("csotic:open-terminal", { detail: { cmd: cmd || "claude" } }))}
                     />
                   ) : rightTab?.path === "forge://brain-graph" ? (
                     <BrainGraphView
@@ -554,9 +471,9 @@ export function MainWorkspace(props: MainWorkspaceProps) {
                       activeFilePath={activeTab?.path}
                       theme={theme}
                     />
-                  ) : rightViewMode === "preview" && rightTab?.path.endsWith(".md") ? (
+                  ) : rightViewMode === "preview" && rightTab?.path?.endsWith(".md") ? (
                     <MarkdownPreview content={rightTab?.content || ""} onClose={() => setRightViewMode("code")} onOpenFile={onOpenFile} />
-                  ) : rightViewMode === "preview" && rightTab?.path.endsWith(".html") ? (
+                  ) : rightViewMode === "preview" && /\.html?$/.test(rightTab?.path || "") ? (
                     <LiveWebPreview htmlContent={rightTab?.content || ""} onClose={() => setRightViewMode("code")} />
                   ) : currentDiff ? (
                     <DiffViewer
@@ -580,19 +497,22 @@ export function MainWorkspace(props: MainWorkspaceProps) {
                       onTriggerInlineAI={(selectedText, range) => setInlineAIState({ open: true, selectedText, range })}
                     />
                   )}
+                  </Suspense>
                 </div>
               </div>
             )}
 
             {/* Floating Cursor-style Inline AI Copilot */}
             {inlineAIState.open && (
-              <InlineAICopilot
-                filePath={activeTab?.path || ""}
-                selectedText={inlineAIState.selectedText}
-                activeModel={activeModel}
-                onAccept={handleInlineAIAccept}
-                onClose={() => setInlineAIState({ open: false, selectedText: "", range: null })}
-              />
+              <Suspense fallback={null}>
+                <InlineAICopilot
+                  filePath={activeTab?.path || ""}
+                  selectedText={inlineAIState.selectedText}
+                  activeModel={activeModel}
+                  onAccept={handleInlineAIAccept}
+                  onClose={() => setInlineAIState({ open: false, selectedText: "", range: null })}
+                />
+              </Suspense>
             )}
           </div>
         )}
@@ -628,71 +548,35 @@ export function MainWorkspace(props: MainWorkspaceProps) {
           }}
         >
           {aiSlideVisible && (
-            <AiCoderSlidePanel
-              activeProject={activeProject}
-              activeModel={activeModel}
-              conversationId={conversationId}
-              onConversationTitleChange={onConversationTitleChange}
-              permissionProfile={permissionProfile}
-              attachedProjectPaths={attachedProjectPaths}
-              onClose={() => onToggleAiSlide?.()}
-              onApplyToActiveTab={handleApplyToActiveTab}
-              onInsertAtCursor={handleInsertAtCursor}
-              activeFileName={activeTab?.title || null}
-              activeFileContent={activeTab?.content || null}
-              activeFilePath={activeTab?.path || null}
-              conversations={conversations}
-              onSelectConversation={onSelectConversation}
-              onNewConversation={onNewConversation}
-              onDeleteConversation={onDeleteConversation}
-              onOpenFile={onOpenFile}
-              onTabContentChange={onTabContentChange}
-            />
+            <Suspense fallback={<div style={{ flex: 1, background: "var(--color-bg-surface)" }} />}>
+              <AiCoderSlidePanel
+                activeProject={activeProject}
+                activeModel={activeModel}
+                modelsList={modelsList}
+                onSelectModel={onSelectModel}
+                onOpenSettings={onOpenSettings}
+                conversationId={conversationId}
+                onConversationTitleChange={onConversationTitleChange}
+                permissionProfile={permissionProfile}
+                attachedProjectPaths={attachedProjectPaths}
+                onClose={() => onToggleAiSlide?.()}
+                onApplyToActiveTab={handleApplyToActiveTab}
+                onInsertAtCursor={handleInsertAtCursor}
+                activeFileName={activeTab?.title || null}
+                activeFileContent={activeTab?.content || null}
+                activeFilePath={activeTab?.path || null}
+                conversations={conversations}
+                onSelectConversation={onSelectConversation}
+                onNewConversation={onNewConversation}
+                onDeleteConversation={onDeleteConversation}
+                onOpenFile={onOpenFile}
+                onTabContentChange={onTabContentChange}
+              />
+            </Suspense>
           )}
         </div>
       </div>
 
-      {/* Editor Status Bar */}
-      {activeTab && (
-        <div className="editor-status-bar" style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 12px",
-          height: 24,
-          background: "var(--color-bg-surface)",
-          borderTop: "1px solid var(--color-border-subtle)",
-          fontSize: "11px",
-          color: "var(--color-text-tertiary)",
-          userSelect: "none",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ color: "var(--color-text-secondary)" }}>
-              Ln {cursorPos.line}, Col {cursorPos.column}
-            </span>
-            <span>Spaces: 2</span>
-            <span>UTF-8</span>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button
-              onClick={onToggleAiSlide}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                color: aiSlideVisible ? "var(--color-accent-primary)" : "var(--color-text-tertiary)",
-                display: "flex", alignItems: "center", gap: 4, fontSize: "11px",
-                padding: "0 4px",
-              }}
-            >
-              <Sparkles size={11} />
-              <span>AI Slide (Ctrl+L)</span>
-            </button>
-            <span style={{ textTransform: "capitalize", color: "var(--color-text-secondary)" }}>
-              {getLanguageFromPath(activeTab.path)}
-            </span>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

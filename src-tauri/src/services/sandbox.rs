@@ -16,20 +16,27 @@ pub fn run_in_sandbox(command: &str, project_path: &str) -> std::result::Result<
         ""
     };
 
-    let docker_res = Command::new("docker")
-        .args(&[
-            "run",
-            "--rm",
-            "-v",
-            &format!("{}{}", project_path, mount_mode),
-            "-w",
-            "/workspace",
-            image,
-            "sh",
-            "-c",
-            command,
-        ])
-        .output();
+    let mut docker_cmd = Command::new("docker");
+    docker_cmd.args([
+        "run",
+        "--rm",
+        "-v",
+        &format!("{}{}", project_path, mount_mode),
+        "-w",
+        "/workspace",
+        image,
+        "sh",
+        "-c",
+        command,
+    ]);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        docker_cmd.creation_flags(0x08000000);
+    }
+
+    let docker_res = docker_cmd.output();
 
     match docker_res {
         Ok(output) if output.status.success() => {
@@ -44,10 +51,19 @@ pub fn run_in_sandbox(command: &str, project_path: &str) -> std::result::Result<
             // Fallback to local shell bounded to project_path if Docker is unavailable
             let shell = if cfg!(windows) { "cmd" } else { "sh" };
             let flag = if cfg!(windows) { "/C" } else { "-c" };
-            let local_out = Command::new(shell)
+            let mut local_cmd = Command::new(shell);
+            local_cmd
                 .arg(flag)
                 .arg(command)
-                .current_dir(project_path)
+                .current_dir(project_path);
+
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                local_cmd.creation_flags(0x08000000);
+            }
+
+            let local_out = local_cmd
                 .output()
                 .map_err(|e| format!("Local sandbox fallback failed: {e}"))?;
 

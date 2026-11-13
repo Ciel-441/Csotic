@@ -1,5 +1,8 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useCallback } from "react";
+import "./monacoSetup";
 import Editor, { OnMount, OnChange, BeforeMount } from "@monaco-editor/react";
+import { getLanguageFromPath } from "./languages";
+import { trackEditor } from "./activeEditor";
 import type { editor } from "monaco-editor";
 
 interface MonacoCodeEditorProps {
@@ -18,60 +21,7 @@ interface MonacoCodeEditorProps {
   theme?: "dark" | "light";
 }
 
-export function getLanguageFromPath(filePath: string): string {
-  const ext = filePath.split(".").pop()?.toLowerCase() || "";
-  switch (ext) {
-    case "ts":
-    case "tsx":
-      return "typescript";
-    case "js":
-    case "jsx":
-      return "javascript";
-    case "rs":
-      return "rust";
-    case "py":
-      return "python";
-    case "json":
-      return "json";
-    case "css":
-      return "css";
-    case "scss":
-    case "sass":
-      return "scss";
-    case "html":
-    case "htm":
-      return "html";
-    case "md":
-    case "markdown":
-      return "markdown";
-    case "toml":
-      return "ini";
-    case "yaml":
-    case "yml":
-      return "yaml";
-    case "sql":
-      return "sql";
-    case "sh":
-    case "bash":
-    case "zsh":
-      return "shell";
-    case "c":
-    case "h":
-      return "c";
-    case "cpp":
-    case "hpp":
-    case "cc":
-      return "cpp";
-    case "go":
-      return "go";
-    case "xml":
-    case "sal":
-    case "salivo":
-      return "salivo";
-    default:
-      return "plaintext";
-  }
-}
+export { getLanguageFromPath };
 
 export function MonacoCodeEditor({
   filePath,
@@ -370,6 +320,7 @@ export function MonacoCodeEditor({
 
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    trackEditor(editor);
 
     // Register Save command Ctrl+S
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -401,15 +352,9 @@ export function MonacoCodeEditor({
     onChangeRef.current?.(value ?? "");
   }, []);
 
-  // Ensure editor updates when content changes externally (e.g. switching tabs or AI apply)
-  useEffect(() => {
-    if (editorRef.current) {
-      const currentVal = editorRef.current.getValue();
-      if (currentVal !== content) {
-        editorRef.current.setValue(content);
-      }
-    }
-  }, [content]);
+  // External content changes (tab switch, AI apply) are synced by @monaco-editor/react itself:
+  // `path` swaps to that file's model, and a changed `value` is applied with executeEdits,
+  // which keeps undo history. A manual setValue here would wipe undo and fire a spurious onChange.
 
   return (
     <div className="monaco-wrapper" style={{ width: "100%", height: "100%", overflow: "hidden", position: "relative" }}>

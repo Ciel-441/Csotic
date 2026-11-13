@@ -305,7 +305,7 @@ impl ProjectDetector {
 
         // Extract proposed symbols if content is available
         let proposed_symbols: Vec<String> = if let Some(content) = proposed_content {
-            crate::services::symbols::extract_symbols(&std::path::Path::new(proposed_path), content)
+            crate::services::symbols::extract_symbols(std::path::Path::new(proposed_path), content)
                 .into_iter()
                 .map(|s| s.name.to_lowercase())
                 .collect()
@@ -384,6 +384,7 @@ impl ProjectDetector {
     }
 
     /// Checks for semantic duplication against existing project components (e.g. AuthProvider.tsx vs AuthenticationProvider.tsx)
+    #[allow(dead_code)]
     pub fn find_semantic_duplication(state: &ProjectState, proposed_path: &str) -> Option<String> {
         Self::find_semantic_duplication_with_content(state, proposed_path, None).map(|(file, _)| file)
     }

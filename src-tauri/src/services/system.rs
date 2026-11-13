@@ -3,8 +3,31 @@ use std::fs::{OpenOptions, create_dir_all};
 use std::io::Write;
 use tauri::{Manager, Emitter};
 
+#[cfg(target_os = "windows")]
+pub fn trim_process_memory() {
+    extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn K32EmptyWorkingSet(hProcess: isize) -> i32;
+        fn SetProcessWorkingSetSize(hProcess: isize, dwMinimumWorkingSetSize: usize, dwMaximumWorkingSetSize: usize) -> i32;
+    }
+    unsafe {
+        let process = GetCurrentProcess();
+        K32EmptyWorkingSet(process);
+        SetProcessWorkingSetSize(process, usize::MAX, usize::MAX);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn trim_process_memory() {
+    // No-op on non-Windows platforms
+}
+
 pub async fn handle(action: &str, payload: &serde_json::Value, app_handle: &tauri::AppHandle) -> Result<serde_json::Value, String> {
     match action {
+        "trim_memory" => {
+            trim_process_memory();
+            Ok(serde_json::json!({ "trimmed": true }))
+        }
         "health" => {
             let client = OllamaClient::new(None);
             let ollama_reachable = client.is_reachable().await;
@@ -80,11 +103,13 @@ pub async fn handle(action: &str, payload: &serde_json::Value, app_handle: &taur
             }
             
             let timestamp = chrono::Utc::now().to_rfc3339();
-            if let Ok(app_dir) = app_handle.path().app_data_dir() {
-                let _ = create_dir_all(&app_dir);
-                let log_file_path = app_dir.join("app.log");
-                if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_file_path) {
-                    let _ = writeln!(file, "[{}] [{}] {}", timestamp, level.to_uppercase(), message);
+            if level == "error" || level == "warn" {
+                if let Ok(app_dir) = app_handle.path().app_data_dir() {
+                    let _ = create_dir_all(&app_dir);
+                    let log_file_path = app_dir.join("app.log");
+                    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_file_path) {
+                        let _ = writeln!(file, "[{}] [{}] {}", timestamp, level.to_uppercase(), message);
+                    }
                 }
             }
 

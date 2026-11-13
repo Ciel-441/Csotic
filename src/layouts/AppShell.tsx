@@ -1,15 +1,24 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from "react";
 import { TopBar } from "../components/TopBar";
 import { Sidebar } from "../components/Sidebar";
-import { MainWorkspace, FileDiff } from "../components/MainWorkspace";
-import { RightPanel } from "../components/RightPanel";
+import { MainWorkspace, FileDiff, getLanguageFromPath } from "../components/MainWorkspace";
 import { BottomDock } from "../components/BottomDock";
+import { StatusBar } from "../components/StatusBar";
 import { CustomDialog } from "../components/GlobalDialog";
 import { workspace, models, filesystem, terminal } from "../services/ipc";
 import { ProjectInfo, ModelMetadata, EditorTab } from "../types/ipc";
 import { pluginManager } from "../plugins/PluginManager";
-import { SearchModal } from "../components/SearchModal";
-import { SettingsModal } from "../components/SettingsModal";
+import { auth as ipcAuth } from "../services/ipc";
+import type { AuthSession } from "../types/auth";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { runTask } from "../services/runTasks";
+
+// Defer modals and heavy panels via React.lazy so they do not impact startup latency or base memory
+const RightPanel = lazy(() => import("../components/RightPanel").then((m) => ({ default: m.RightPanel })));
+const SearchModal = lazy(() => import("../components/SearchModal").then((m) => ({ default: m.SearchModal })));
+const SettingsModal = lazy(() => import("../components/SettingsModal").then((m) => ({ default: m.SettingsModal })));
+const AuthModal = lazy(() => import("../components/AuthModal").then((m) => ({ default: m.AuthModal })));
+const ShortcutsModal = lazy(() => import("../components/ShortcutsModal").then((m) => ({ default: m.ShortcutsModal })));
 
 interface Conversation {
   id: number;
@@ -33,11 +42,15 @@ export function AppShell() {
   const [loaded, setLoaded] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [rightPanelVisible, setRightPanelVisible] = useState(false);
-  const [bottomDockVisible, setBottomDockVisible] = useState(true);
+  const [bottomDockVisible, setBottomDockVisible] = useState(false);
   const [activeBottomTab, setActiveBottomTab] = useState<string>("terminal");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchInitialMode, setSearchInitialMode] = useState<"files" | "commands">("files");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<"models" | "keys" | "rules" | "accounts" | "general">("keys");
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const [isSplit, setIsSplit] = useState(false);
 
   // Theme state: dark | light (persisted in localStorage)
@@ -58,6 +71,29 @@ export function AppShell() {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
+  // Load persisted authentication session from backend (~/.forge/auth.json)
+  useEffect(() => {
+    let mounted = true;
+    ipcAuth.getSession().then((res: any) => {
+      if (mounted && res?.success && res?.data) {
+        const session = res.data.session !== undefined ? res.data.session : (res.data.user ? res.data : null);
+        setAuthSession(session as AuthSession | null);
+      }
+    }).catch((err) => {
+      console.warn("Failed to get initial auth session:", err);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await ipcAuth.logout();
+    } catch (e) {
+      console.warn("Logout error:", e);
+    }
+    setAuthSession(null);
+  }, []);
+
   // ── Decoupled View States ──
   // sidebarView: controls ONLY the left sidebar panel
   const [sidebarView, setSidebarView] = useState<string>("explorer");
@@ -65,8 +101,22 @@ export function AppShell() {
   const [aiSlideVisible, setAiSlideVisible] = useState(false);
 
   // Multi-Tab Editor States
-  const [openTabs, setOpenTabs] = useState<EditorTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [openTabs, setOpenTabs] = useState<EditorTab[]>(() => {
+    const showWelcome = localStorage.getItem("csotic.show_welcome_on_startup");
+    if (showWelcome !== "false") {
+      return [{ id: "welcome", path: "csotic://welcome", title: "Welcome", content: "", isDirty: false }];
+    }
+    return [];
+  });
+  const [activeTabId, setActiveTabId] = useState<string | null>(() => {
+    const showWelcome = localStorage.getItem("csotic.show_welcome_on_startup");
+    if (showWelcome !== "false") {
+      return "welcome";
+    }
+    return null;
+  });
+  const activeTab = openTabs.find((t) => t.id === activeTabId);
+  const [globalCursorPos, setGlobalCursorPos] = useState({ line: 1, col: 1 });
   const untitledCounterRef = useRef(1);
 
   // Project & Model states
@@ -173,13 +223,9 @@ export function AppShell() {
     localStorage.setItem("forge.conversations", JSON.stringify(conversations));
   }, [conversations]);
 
-  // Refresh recent projects from database
+  // Refresh recent projects from database (cleaned for now per user instruction)
   const refreshRecentProjects = useCallback(async () => {
-    const res = await workspace.getRecentProjects();
-    const list = Array.isArray(res.data) ? res.data : (res.data as any)?.projects;
-    if (res.success && Array.isArray(list)) {
-      setRecentProjects(list as ProjectInfo[]);
-    }
+    setRecentProjects([]);
   }, []);
 
   // Fetch discovered models from SDK
@@ -280,38 +326,35 @@ export function AppShell() {
     }).catch((e) => console.error("Layout update failed:", e));
   }, [sidebarVisible, rightPanelVisible, bottomDockVisible, loaded]);
 
-  // Handle opening a project folder
-  const handleOpenProject = useCallback(async (path: string, conversationId = activeConversationId) => {
-    try {
-      const res = await workspace.openProject(path);
-      if (res.success && res.data) {
-        const state = res.data as any;
-        setActiveProject(state.active_project);
-        setOpenTabs([]);
-        setActiveTabId(null);
-        setConversations((current) => current.map((conversation) => conversation.id === conversationId
-          ? { ...conversation, activeProjectPath: state.active_project.path, projectPaths: Array.from(new Set([...conversation.projectPaths, state.active_project.path])), updatedAt: new Date().toISOString() }
-          : conversation));
-        await refreshRecentProjects();
-      } else {
-        await CustomDialog.alert(`Failed to open project: ${res.error?.message || "Unknown error"}`);
-      }
-    } catch (e) {
-      await CustomDialog.alert(`IPC Error opening project: ${e}`);
-    }
-  }, [activeConversationId, refreshRecentProjects]);
-
-  const handleOpenFolderDialog = useCallback(async () => {
-    const res = await filesystem.selectFolder();
-    if (res.success && res.data && (res.data as any).path) {
-      await handleOpenProject((res.data as any).path);
-    }
-  }, [handleOpenProject]);
-
-  // Handle opening a file in Multi-Tab Editor
-  const cleanPath = (p: string) => {
+  // Utility to normalize paths safely
+  const cleanPath = (p?: string | null) => {
+    if (!p) return "";
     return p.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "").replace(/\\/g, "/");
   };
+
+  const handleOpenWelcomeTab = useCallback(() => {
+    setOpenTabs((prev) => {
+      if (prev.some((t) => t.id === "welcome" || t.path === "csotic://welcome")) {
+        return prev;
+      }
+      return [{ id: "welcome", path: "csotic://welcome", title: "Welcome", content: "", isDirty: false }, ...prev];
+    });
+    setActiveTabId("welcome");
+  }, []);
+
+  const handleRevealInExplorer = useCallback(async () => {
+    const targetPath = activeProject?.path || "C:\\codes";
+    try {
+      const { openPath } = await import("@tauri-apps/plugin-opener");
+      await openPath(targetPath);
+    } catch {
+      try {
+        await terminal.executeCommand(".", `explorer "${targetPath}"`, true);
+      } catch (e) {
+        console.warn("Reveal in explorer error:", e);
+      }
+    }
+  }, [activeProject]);
 
   // Open the interactive Obsidian Knowledge & Code Graph View tab
   const handleOpenBrainGraph = useCallback(() => {
@@ -331,40 +374,54 @@ export function AppShell() {
     }
 
     let normalized = cleanPath(path);
+    const cleanProj = activeProject ? cleanPath(activeProject.path) : "";
 
-    // Resolve relative wikilinks (e.g. "architecture.md" or "tasks") to full project path
-    if (activeProject && !normalized.includes(":") && !normalized.startsWith("/")) {
-      const brainCandidate = `${cleanPath(activeProject.path)}/.forge/brain/${normalized}${normalized.endsWith(".md") ? "" : ".md"}`;
-      const projectCandidate = `${cleanPath(activeProject.path)}/${normalized}`;
-      
-      const checkBrain = await filesystem.readFile(brainCandidate);
-      if (checkBrain.success) {
-        normalized = brainCandidate;
-      } else {
-        const checkProject = await filesystem.readFile(projectCandidate);
-        if (checkProject.success) {
+    // 1. Prioritize reading the exact path requested first
+    let readRes = await filesystem.readFile(normalized);
+
+    // 2. If direct read failed and we have an active project, try resolving relative candidates
+    if (!readRes.success && cleanProj) {
+      if (!normalized.startsWith(cleanProj + "/") && !normalized.includes(":") && !normalized.startsWith("/")) {
+        const projectCandidate = `${cleanProj}/${normalized}`;
+        const checkProj = await filesystem.readFile(projectCandidate);
+        if (checkProj.success) {
           normalized = projectCandidate;
+          readRes = checkProj;
+        } else {
+          // Check brain graph markdown notes only if standard file is not found
+          const brainCandidate = `${cleanProj}/.forge/brain/${normalized}${normalized.endsWith(".md") ? "" : ".md"}`;
+          const checkBrain = await filesystem.readFile(brainCandidate);
+          if (checkBrain.success) {
+            normalized = brainCandidate;
+            readRes = checkBrain;
+          }
         }
       }
     }
 
-    const fileName = normalized.split("/").pop() || "untitled";
+    // A failed read must not open an empty tab: autosave would then overwrite the real file with "".
+    if (!readRes.success) {
+      await CustomDialog.alert(`Could not open ${normalized}: ${readRes.error?.message || "file could not be read"}`);
+      return;
+    }
 
-    // Read content from disk
-    const readRes = await filesystem.readFile(normalized);
-    const content = readRes.success && readRes.data ? ((readRes.data as any).content || "") : "";
+    const fileName = normalized.split("/").pop() || "untitled";
+    const content: string = (readRes.data as any)?.content ?? "";
 
     setOpenTabs((prev) => {
+      // Clear welcome tab when opening a real code file so user directly enters the editor
+      const cleaned = prev.filter((t) => t.id !== "welcome" && t.path !== "csotic://welcome");
+
       // Find existing tab with same canonical path or relative suffix
-      const existingIdx = prev.findIndex((t) => {
+      const existingIdx = cleaned.findIndex((t) => {
         const tNorm = cleanPath(t.path);
         return t.id === normalized || t.path === normalized || tNorm === normalized || 
                (tNorm.length > 0 && normalized.length > 0 && (tNorm.endsWith("/" + normalized) || normalized.endsWith("/" + tNorm)));
       });
 
       if (existingIdx !== -1) {
-        // Tab already open! Update its path/id to canonical and refresh content if read, no duplicate!
-        return prev.map((t, i) => i === existingIdx ? { ...t, id: normalized, path: normalized, content: content || t.content } : t);
+        // Tab already open: canonicalize id/path, refresh from disk unless it has unsaved edits.
+        return cleaned.map((t, i) => i === existingIdx ? { ...t, id: normalized, path: normalized, content: t.isDirty ? t.content : content } : t);
       }
 
       const newTab: EditorTab = {
@@ -374,11 +431,71 @@ export function AppShell() {
         content,
         isDirty: false,
       };
-      return [...prev, newTab];
+      return [...cleaned, newTab];
     });
 
     setActiveTabId(normalized);
   }, [activeProject, handleOpenBrainGraph]);
+
+  // Handle opening a project folder and directly navigating to its primary file
+  const handleOpenProject = useCallback(async (path: string, conversationId = activeConversationId) => {
+    try {
+      const res = await workspace.openProject(path);
+      if (res.success && res.data) {
+        const state = res.data as any;
+        const activeProj = state.active_project || (state.path ? { name: state.name || path.split(/[/\\]/).filter(Boolean).pop() || "project", path: state.path } : { name: path.split(/[/\\]/).filter(Boolean).pop() || "project", path });
+        setActiveProject(activeProj);
+        setSidebarVisible(true);
+        setSidebarView("explorer");
+
+        // Take user directly to the primary file of the project!
+        let targetFile: string | null = null;
+        try {
+          const dirRes = await filesystem.readDir(activeProj.path);
+          const entries = Array.isArray((dirRes?.data as any)?.entries) 
+            ? (dirRes.data as any).entries 
+            : (Array.isArray(dirRes?.data) ? dirRes.data : []);
+          if (entries.length > 0) {
+            const files = entries.filter((e: any) => !e.is_dir && !e.name.startsWith("."));
+            const entryOrder = ["README.md", "package.json", "index.html", "main.rs", "App.tsx", "main.py", "Main.java", "main.c"];
+            const best = files.find((f: any) => entryOrder.includes(f.name));
+            if (best) {
+              targetFile = best.path;
+            } else if (files.length > 0) {
+              targetFile = files[0].path;
+            }
+          }
+        } catch (e) {
+          console.warn("Could not read project directory:", e);
+        }
+
+        if (targetFile) {
+          await handleOpenFile(targetFile);
+        } else {
+          // If no files yet, open an untitled editor buffer inside this project
+          const untitledId = `${activeProj.path}/untitled.txt`;
+          setOpenTabs([{ id: untitledId, path: untitledId, title: "untitled.txt", content: "", isDirty: false }]);
+          setActiveTabId(untitledId);
+        }
+
+        setConversations((current) => current.map((conversation) => conversation.id === conversationId
+          ? { ...conversation, activeProjectPath: activeProj.path, projectPaths: Array.from(new Set([...conversation.projectPaths, activeProj.path])), updatedAt: new Date().toISOString() }
+          : conversation));
+        await refreshRecentProjects();
+      } else {
+        await CustomDialog.alert(`Failed to open project: ${res.error?.message || "Unknown error"}`);
+      }
+    } catch (e) {
+      await CustomDialog.alert(`IPC Error opening project: ${e}`);
+    }
+  }, [activeConversationId, handleOpenFile, refreshRecentProjects]);
+
+  const handleOpenFolderDialog = useCallback(async () => {
+    const res = await filesystem.selectFolder();
+    if (res.success && res.data && (res.data as any).path) {
+      await handleOpenProject((res.data as any).path);
+    }
+  }, [handleOpenProject]);
 
   // Create instant untitled tab (Ctrl+N)
   const handleNewUntitledTab = useCallback(() => {
@@ -389,9 +506,9 @@ export function AppShell() {
       path: id,
       title,
       content: "",
-      isDirty: true,
+      isDirty: false,
     };
-    setOpenTabs((prev) => [...prev, newTab]);
+    setOpenTabs((prev) => [...prev.filter((t) => t.id !== "welcome" && t.path !== "csotic://welcome"), newTab]);
     setActiveTabId(id);
   }, []);
 
@@ -400,14 +517,13 @@ export function AppShell() {
 
   const handleTabContentChange = useCallback((tabId: string, newContent: string, isDirty = true) => {
     const normalized = cleanPath(tabId);
-    setOpenTabs((prev) => prev.map((t) => {
-      const tNorm = cleanPath(t.path);
-      const isMatch = t.id === tabId || t.path === tabId || t.id === normalized || tNorm === normalized || tNorm.endsWith(normalized) || normalized.endsWith(tNorm);
-      return isMatch ? { ...t, content: newContent, isDirty } : t;
-    }));
+    // Exact match only: suffix matching let an edit in one tab overwrite another tab with a similar path.
+    setOpenTabs((prev) => prev.map((t) => (t.id === tabId || cleanPath(t.path) === normalized) ? { ...t, content: newContent, isDirty } : t));
 
-    // Auto-save to disk for real file paths so compilers (gcc, salivo, cargo) always see latest code
-    if (!normalized.startsWith("untitled://") && normalized.length > 0) {
+    // Auto-save to disk for real file paths so compilers (gcc, salivo, cargo) always see latest code.
+    // Virtual tabs (untitled://, extension:, claude-code:, forge://, csotic://) never touch disk.
+    const isRealFile = /^([a-zA-Z]:)?\//.test(normalized);
+    if (isRealFile) {
       if (autoSaveTimerRef.current[normalized]) {
         window.clearTimeout(autoSaveTimerRef.current[normalized]);
       }
@@ -511,58 +627,106 @@ export function AppShell() {
         };
         setOpenTabs((prev) => [...prev, newTab]);
         setActiveTabId(newTab.id);
+        return;
+      }
+      if (data.path) {
+        await handleOpenFile(data.path);
       }
     }
-  }, [openTabs]);
+  }, [openTabs, handleOpenFile]);
 
-  const handleCloseTab = useCallback((tabId: string, e?: React.MouseEvent) => {
+  // Latest tabs for close handlers, so they can decide (and confirm) before touching state.
+  const openTabsRef = useRef(openTabs);
+  openTabsRef.current = openTabs;
+
+  // History stack of closed real file paths for Ctrl+Shift+T
+  const closedTabsHistoryRef = useRef<string[]>([]);
+  // Navigation history stacks for Alt+ArrowLeft / Alt+ArrowRight
+  const tabHistoryRef = useRef<string[]>([]);
+  const forwardHistoryRef = useRef<string[]>([]);
+  const isNavigatingHistoryRef = useRef(false);
+
+  useEffect(() => {
+    if (activeTabId) {
+      if (!isNavigatingHistoryRef.current) {
+        forwardHistoryRef.current = [];
+      }
+      isNavigatingHistoryRef.current = false;
+      const hist = tabHistoryRef.current;
+      if (hist[hist.length - 1] !== activeTabId) {
+        hist.push(activeTabId);
+        if (hist.length > 50) hist.shift();
+      }
+    }
+  }, [activeTabId]);
+
+  // Real files autosave; only untitled buffers can lose work on close.
+  const confirmDiscard = useCallback(async (tabs: EditorTab[]) => {
+    const unsaved = tabs.filter((t) => t.isDirty && t.path.startsWith("untitled://"));
+    if (unsaved.length === 0) return true;
+    const names = unsaved.map((t) => t.title).join(", ");
+    return CustomDialog.confirm(`${names} ${unsaved.length === 1 ? "has" : "have"} unsaved changes that will be lost.`, "Discard unsaved changes?", true, "Discard");
+  }, []);
+
+  const handleReopenLastClosedTab = useCallback(() => {
+    while (closedTabsHistoryRef.current.length > 0) {
+      const lastPath = closedTabsHistoryRef.current.pop();
+      if (lastPath && !openTabs.some((t) => cleanPath(t.path) === cleanPath(lastPath))) {
+        void handleOpenFile(lastPath);
+        return;
+      }
+    }
+  }, [handleOpenFile, openTabs]);
+
+  const handleCloseTab = useCallback(async (tabId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const normalized = cleanPath(tabId);
+    const prev = openTabsRef.current;
+    const closingIdx = prev.findIndex((t) => t.id === tabId || cleanPath(t.path) === normalized);
+    if (closingIdx === -1) return;
+    const closing = prev[closingIdx];
+    if (!(await confirmDiscard([closing]))) return;
 
-    setOpenTabs((prev) => {
-      const closingIdx = prev.findIndex((t) => {
-        const tNorm = cleanPath(t.path);
-        return t.id === tabId || t.path === tabId || t.id === normalized || tNorm === normalized ||
-               tNorm.endsWith("/" + normalized) || normalized.endsWith("/" + tNorm);
-      });
+    if (closing.path && !closing.path.includes("://") && !closing.path.startsWith("extension:")) {
+      closedTabsHistoryRef.current.push(closing.path);
+    }
 
-      if (closingIdx === -1) return prev;
+    tabHistoryRef.current = tabHistoryRef.current.filter((id) => id !== closing.id && id !== tabId && cleanPath(id) !== normalized);
+    forwardHistoryRef.current = forwardHistoryRef.current.filter((id) => id !== closing.id && id !== tabId && cleanPath(id) !== normalized);
 
-      const nextTabs = prev.filter((_, i) => i !== closingIdx);
-
-      // If activeTab is being closed, switch to adjacent tab rather than null
-      setActiveTabId((current) => {
-        const isCurrentClosing = current === tabId || cleanPath(current || "") === normalized ||
-          (current && prev[closingIdx] && (current === prev[closingIdx].id || cleanPath(current) === cleanPath(prev[closingIdx].path)));
-
-        if (isCurrentClosing) {
-          if (nextTabs.length === 0) {
-            setIsSplit(false);
-            return null;
-          }
-          const nextIdx = Math.max(0, Math.min(closingIdx, nextTabs.length - 1));
-          return nextTabs[nextIdx].id;
-        }
-        return current;
-      });
-
-      return nextTabs;
+    const nextTabs = prev.filter((_, i) => i !== closingIdx);
+    setOpenTabs((cur) => cur.filter((t) => t.id !== closing.id));
+    // Closing the active tab focuses its right neighbour (or the new last tab).
+    setActiveTabId((current) => {
+      if (current !== closing.id) return current;
+      return nextTabs.length ? nextTabs[Math.min(closingIdx, nextTabs.length - 1)].id : null;
     });
-  }, []);
+    if (nextTabs.length === 0) setIsSplit(false);
+  }, [confirmDiscard]);
 
-  const handleCloseAllTabs = useCallback(() => {
+  const handleCloseAllTabs = useCallback(async () => {
+    if (!(await confirmDiscard(openTabsRef.current))) return;
     setOpenTabs([]);
     setActiveTabId(null);
-  }, []);
+    setIsSplit(false);
+    tabHistoryRef.current = [];
+    forwardHistoryRef.current = [];
+  }, [confirmDiscard]);
 
-  const handleCloseOtherTabs = useCallback((keepTabId: string) => {
+  const handleCloseOtherTabs = useCallback(async (keepTabId: string) => {
     const normalized = cleanPath(keepTabId);
-    setOpenTabs((prev) => prev.filter((t) => t.id === keepTabId || cleanPath(t.path) === normalized));
+    const isKept = (t: EditorTab) => t.id === keepTabId || cleanPath(t.path) === normalized;
+    if (!(await confirmDiscard(openTabsRef.current.filter((t) => !isKept(t))))) return;
+    setOpenTabs((prev) => prev.filter(isKept));
     setActiveTabId(keepTabId);
-  }, []);
+    tabHistoryRef.current = [keepTabId];
+    forwardHistoryRef.current = [];
+  }, [confirmDiscard]);
 
   const handleCloseSavedTabs = useCallback(() => {
-    setOpenTabs((prev) => prev.filter((t) => t.isDirty));
+    const remaining = openTabsRef.current.filter((t) => t.isDirty);
+    setOpenTabs(remaining);
+    setActiveTabId((cur) => (remaining.some((t) => t.id === cur) ? cur : remaining[0]?.id ?? null));
   }, []);
 
   const handleOpenExtension = useCallback((ext: any) => {
@@ -582,6 +746,35 @@ export function AppShell() {
     });
     setActiveTabId(tabId);
   }, []);
+
+  const handleOpenClaudeSession = useCallback((session: any) => {
+    if (!session || !session.id) return;
+    const tabId = `claude-code:${session.id}`;
+    setOpenTabs((prev) => {
+      const existing = prev.find((t) => t.id === tabId || t.path === tabId);
+      if (existing) {
+        return prev.map((t) => (t.id === tabId ? { ...t, claudeSessionData: session, title: session.title } : t));
+      }
+      const newTab: EditorTab = {
+        id: tabId,
+        path: tabId,
+        title: session.title,
+        claudeSessionData: session,
+      };
+      return [...prev, newTab];
+    });
+    setActiveTabId(tabId);
+  }, []);
+
+  useEffect(() => {
+    const handleSessionOpen = (e: any) => {
+      if (e.detail?.session) {
+        handleOpenClaudeSession(e.detail.session);
+      }
+    };
+    window.addEventListener("csotic:open-claude-session", handleSessionOpen);
+    return () => window.removeEventListener("csotic:open-claude-session", handleSessionOpen);
+  }, [handleOpenClaudeSession]);
 
   // Handle Command Palette actions
   const handleExecuteCommand = useCallback(async (commandId: string) => {
@@ -606,34 +799,89 @@ export function AppShell() {
         setBottomDockVisible((v) => !v);
         break;
       }
-      case "runner.dev": {
+      case "terminal.focus": {
         setBottomDockVisible(true);
         setActiveBottomTab("terminal");
-        if (activeProject) {
-          void terminal.executeCommand(activeProject.path, "npm run dev", true);
-        }
         break;
       }
+      case "runner.dev":
       case "runner.build": {
-        setBottomDockVisible(true);
-        setActiveBottomTab("terminal");
-        if (activeProject) {
-          void terminal.executeCommand(activeProject.path, "npm run build", true);
-        }
+        const cmd = commandId === "runner.dev" ? "npm run dev" : "npm run build";
+        window.dispatchEvent(new CustomEvent("csotic:open-terminal", { detail: { cmd, cwd: activeProject?.path } }));
+        break;
+      }
+      case "runner.runActive": {
+        runTask("run", activeTab?.path, activeProject?.path);
+        break;
+      }
+      case "runner.buildActive": {
+        runTask("build", activeTab?.path, activeProject?.path);
         break;
       }
       case "ai.chat": {
         setAiSlideVisible((v) => !v);
         break;
       }
-      case "git.status": {
+      case "git.status":
+      case "view.git": {
+        setSidebarVisible(true);
         setSidebarView("git");
+        break;
+      }
+      case "view.explorer": {
+        setSidebarVisible(true);
+        setSidebarView("explorer");
+        break;
+      }
+      case "view.search": {
+        setSidebarVisible(true);
+        setSidebarView("search");
+        break;
+      }
+      case "view.plugins": {
+        setSidebarVisible(true);
+        setSidebarView("plugins");
+        break;
+      }
+      case "view.problems": {
+        setBottomDockVisible(true);
+        setActiveBottomTab("problems");
+        break;
+      }
+      case "view.preview": {
+        window.dispatchEvent(new CustomEvent("csotic:toggle-preview"));
+        break;
+      }
+      case "app.settings": {
+        setIsSettingsOpen(true);
+        break;
+      }
+      case "view.fullscreen": {
+        void getCurrentWindow().isFullscreen().then((isFs) => {
+          void getCurrentWindow().setFullscreen(!isFs);
+        });
+        break;
+      }
+      case "editor.reopenClosedTab": {
+        handleReopenLastClosedTab();
+        break;
+      }
+      case "file.saveAs": {
+        if (activeTabId) void handleSaveAsTab(activeTabId);
+        break;
+      }
+      case "file.saveAll": {
+        void handleSaveAll();
+        break;
+      }
+      case "help.shortcuts": {
+        setIsShortcutsOpen(true);
         break;
       }
       default:
         break;
     }
-  }, [activeTabId, activeProject, handleSaveTab, handleNewUntitledTab, handleOpenFolderDialog]);
+  }, [activeTabId, activeProject, activeTab, handleSaveTab, handleSaveAsTab, handleSaveAll, handleNewUntitledTab, handleOpenFolderDialog, handleReopenLastClosedTab]);
 
   // Handle selecting a model
   const handleSelectModel = useCallback(async (modelId: string) => {
@@ -726,7 +974,12 @@ export function AppShell() {
   const handleExportConversation = useCallback((conversationId: number) => {
     const conversation = conversations.find((item) => item.id === conversationId);
     if (!conversation) return;
-    const messages = JSON.parse(localStorage.getItem("forge.conversation-messages") ?? "{}")[conversationId] ?? [];
+    let messages: any[] = [];
+    try {
+      messages = JSON.parse(localStorage.getItem("forge.conversation-messages") ?? "{}")[conversationId] ?? [];
+    } catch {
+      messages = [];
+    }
     const transcript = [`# ${conversation.title}`, "", `Created: ${conversation.createdAt}`, ...messages.map((message: { sender: string; text: string }) => `## ${message.sender === "user" ? "You" : "Csotic"}\n\n${message.text}`)].join("\n\n");
     const url = URL.createObjectURL(new Blob([transcript], { type: "text/markdown" }));
     const link = document.createElement("a");
@@ -736,27 +989,228 @@ export function AppShell() {
 
   /** Global keyboard shortcuts */
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    // Ctrl+P: Quick Open File
-    if (e.ctrlKey && e.key.toLowerCase() === "p" && !e.shiftKey) {
-      e.preventDefault();
-      setSearchInitialMode("files");
-      setIsSearchOpen(true);
-    }
-    // Ctrl+Shift+P: Command Palette
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "p") {
+    // F1: Command Palette
+    if (e.key === "F1") {
       e.preventDefault();
       setSearchInitialMode("commands");
       setIsSearchOpen(true);
+      return;
+    }
+
+    // F11: Toggle Fullscreen
+    if (e.key === "F11") {
+      e.preventDefault();
+      void getCurrentWindow().isFullscreen().then((isFs) => {
+        void getCurrentWindow().setFullscreen(!isFs);
+      });
+      return;
+    }
+
+    // F5 / Ctrl+F5: Run active file
+    if (e.key === "F5") {
+      e.preventDefault();
+      runTask("run", activeTab?.path, activeProject?.path);
+      return;
+    }
+
+    // Alt+1 ... Alt+8 or Ctrl+1 ... Ctrl+8: Go to tab N; Alt+9 / Ctrl+9: Go to last tab
+    if ((e.altKey || e.ctrlKey) && !e.shiftKey && !e.metaKey) {
+      if (e.key >= "1" && e.key <= "8") {
+        const targetIdx = parseInt(e.key, 10) - 1;
+        if (openTabs[targetIdx]) {
+          e.preventDefault();
+          setActiveTabId(openTabs[targetIdx].id);
+          return;
+        }
+      } else if (e.key === "9") {
+        if (openTabs.length > 0) {
+          e.preventDefault();
+          setActiveTabId(openTabs[openTabs.length - 1].id);
+          return;
+        }
+      }
+    }
+
+    const targetEl = e.target as HTMLElement | null;
+    const isTextInput = targetEl && (targetEl.tagName === "INPUT" || targetEl.tagName === "TEXTAREA" || targetEl.isContentEditable);
+
+    // Alt+ArrowLeft: Go back in tab history
+    if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key === "ArrowLeft") {
+      if (isTextInput) return;
+      while (tabHistoryRef.current.length > 1) {
+        const cur = tabHistoryRef.current.pop()!;
+        forwardHistoryRef.current.push(cur);
+        const candidate = tabHistoryRef.current[tabHistoryRef.current.length - 1];
+        if (openTabs.some((t) => t.id === candidate)) {
+          e.preventDefault();
+          isNavigatingHistoryRef.current = true;
+          setActiveTabId(candidate);
+          return;
+        }
+      }
+    }
+
+    // Alt+ArrowRight: Go forward in tab history
+    if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key === "ArrowRight") {
+      if (isTextInput) return;
+      while (forwardHistoryRef.current.length > 0) {
+        const next = forwardHistoryRef.current.pop()!;
+        if (openTabs.some((t) => t.id === next)) {
+          e.preventDefault();
+          tabHistoryRef.current.push(next);
+          isNavigatingHistoryRef.current = true;
+          setActiveTabId(next);
+          return;
+        }
+      }
+    }
+
+    // Shift+Alt+0: Toggle split editor layout
+    if (e.shiftKey && e.altKey && e.key === "0") {
+      e.preventDefault();
+      setIsSplit((s) => !s);
+      return;
+    }
+
+    // Ctrl+Tab / Ctrl+PageDown: Next editor tab
+    if (e.ctrlKey && !e.shiftKey && (e.key === "Tab" || e.key === "PageDown")) {
+      e.preventDefault();
+      if (openTabs.length > 1) {
+        const curIdx = openTabs.findIndex((t) => t.id === activeTabId);
+        const nextIdx = curIdx === -1 ? 0 : (curIdx + 1) % openTabs.length;
+        setActiveTabId(openTabs[nextIdx].id);
+      }
+      return;
+    }
+
+    // Ctrl+Shift+Tab / Ctrl+PageUp: Previous editor tab
+    if (e.ctrlKey && ((e.shiftKey && e.key === "Tab") || (!e.shiftKey && e.key === "PageUp"))) {
+      e.preventDefault();
+      if (openTabs.length > 1) {
+        const curIdx = openTabs.findIndex((t) => t.id === activeTabId);
+        const prevIdx = curIdx === -1 ? openTabs.length - 1 : (curIdx - 1 + openTabs.length) % openTabs.length;
+        setActiveTabId(openTabs[prevIdx].id);
+      }
+      return;
+    }
+
+    // Ctrl+,: Open Settings
+    if (e.ctrlKey && e.key === ",") {
+      e.preventDefault();
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    // Ctrl+Shift+E: Explorer
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "e") {
+      e.preventDefault();
+      setSidebarVisible(true);
+      setSidebarView("explorer");
+      return;
+    }
+
+    // Ctrl+Shift+F: Search panel
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      setSidebarVisible(true);
+      setSidebarView("search");
+      return;
+    }
+
+    // Ctrl+Shift+H: Search panel / Replace in files
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "h") {
+      e.preventDefault();
+      setSidebarVisible(true);
+      setSidebarView("search");
+      return;
+    }
+
+    // Ctrl+Shift+G: Source control
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "g") {
+      e.preventDefault();
+      setSidebarVisible(true);
+      setSidebarView("git");
+      return;
+    }
+
+    // Ctrl+Shift+X: Extensions
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "x") {
+      e.preventDefault();
+      setSidebarVisible(true);
+      setSidebarView("plugins");
+      return;
+    }
+
+    // Ctrl+Shift+B: Build active file/project
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "b") {
+      e.preventDefault();
+      runTask("build", activeTab?.path, activeProject?.path);
+      return;
+    }
+
+    // Ctrl+Shift+T: Reopen last closed tab
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
+      e.preventDefault();
+      handleReopenLastClosedTab();
+      return;
+    }
+
+    // Ctrl+Shift+M: Show Problems panel
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "m") {
+      e.preventDefault();
+      setBottomDockVisible(true);
+      setActiveBottomTab("problems");
+      return;
+    }
+
+    // Ctrl+Shift+U / Ctrl+Shift+D: Show Output / Terminal panel
+    if (e.ctrlKey && e.shiftKey && (e.key.toLowerCase() === "u" || e.key.toLowerCase() === "d")) {
+      e.preventDefault();
+      setBottomDockVisible(true);
+      setActiveBottomTab("terminal");
+      return;
+    }
+
+    // Ctrl+Shift+V: Toggle Markdown / HTML Preview
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v") {
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent("csotic:toggle-preview"));
+      return;
+    }
+
+    // Ctrl+Shift+`: Open terminal and focus it
+    if (e.ctrlKey && e.shiftKey && e.key === "`") {
+      e.preventDefault();
+      setBottomDockVisible(true);
+      setActiveBottomTab("terminal");
+      return;
+    }
+
+    // Ctrl+P / Ctrl+T: Quick Open File
+    if (e.ctrlKey && !e.shiftKey && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "t")) {
+      e.preventDefault();
+      setSearchInitialMode("files");
+      setIsSearchOpen(true);
+      return;
+    }
+    // Ctrl+Shift+P / Ctrl+Shift+O: Command Palette / Symbol Search
+    if (e.ctrlKey && e.shiftKey && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "o")) {
+      e.preventDefault();
+      setSearchInitialMode("commands");
+      setIsSearchOpen(true);
+      return;
     }
     // Ctrl+B: Toggle Explorer/Sidebar
-    if (e.ctrlKey && e.key.toLowerCase() === "b") {
+    if (e.ctrlKey && e.key.toLowerCase() === "b" && !e.shiftKey) {
       e.preventDefault();
       setSidebarVisible((v) => !v);
+      return;
     }
     // Ctrl+`: Toggle Terminal Bottom Dock
-    if (e.ctrlKey && e.key === "`") {
+    if (e.ctrlKey && e.key === "`" && !e.shiftKey) {
       e.preventDefault();
       setBottomDockVisible((v) => !v);
+      return;
     }
     // Ctrl+S: Save current active file
     if (e.ctrlKey && e.key.toLowerCase() === "s" && !e.shiftKey) {
@@ -764,6 +1218,7 @@ export function AppShell() {
       if (activeTabId) {
         void handleSaveTab(activeTabId);
       }
+      return;
     }
     // Ctrl+Shift+S: Save As current active file
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "s") {
@@ -771,42 +1226,62 @@ export function AppShell() {
       if (activeTabId) {
         void handleSaveAsTab(activeTabId);
       }
+      return;
     }
     // Ctrl+O: Open File Dialog
     if (e.ctrlKey && e.key.toLowerCase() === "o" && !e.shiftKey) {
       e.preventDefault();
       void handleOpenFileDialog();
+      return;
     }
-    // Ctrl+W: Close active tab
-    if (e.ctrlKey && e.key.toLowerCase() === "w") {
+    // Ctrl+W / Ctrl+F4: Close active tab
+    if ((e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "w") || (e.ctrlKey && e.key === "F4")) {
       e.preventDefault();
       if (activeTabId) {
         void handleCloseTab(activeTabId);
       }
+      return;
     }
     // Ctrl+\: Toggle Split Editor
     if (e.ctrlKey && e.key === "\\") {
       e.preventDefault();
       setIsSplit((s) => !s);
+      return;
     }
     // Ctrl+L: Toggle Manual Coder Slide (AI Assistant Drawer)
-    if (e.ctrlKey && e.key.toLowerCase() === "l") {
+    if (e.ctrlKey && e.key.toLowerCase() === "l" && !e.shiftKey) {
       e.preventDefault();
       setAiSlideVisible((v) => !v);
+      return;
     }
-    // Ctrl+N: New untitled tab
-    if (e.ctrlKey && e.key.toLowerCase() === "n") {
+    // Ctrl+J: Toggle AI Context Panel
+    if (e.ctrlKey && e.key.toLowerCase() === "j" && !e.shiftKey) {
+      e.preventDefault();
+      setRightPanelVisible((v) => !v);
+      return;
+    }
+    // Ctrl+N: New untitled tab (must check !e.shiftKey)
+    if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
       handleNewUntitledTab();
+      return;
     }
-  }, [activeTabId, handleSaveTab, handleSaveAsTab, handleCloseTab, handleNewUntitledTab, handleOpenFileDialog]);
+  }, [activeTabId, activeTab, activeProject, openTabs, handleSaveTab, handleSaveAsTab, handleCloseTab, handleNewUntitledTab, handleOpenFileDialog, handleReopenLastClosedTab]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  const activeTab = openTabs.find((t) => t.id === activeTabId);
+  useEffect(() => {
+    // Only reveals the dock; the terminal panel itself runs `detail.cmd`.
+    const handleOpenTerm = () => {
+      setBottomDockVisible(true);
+      setActiveBottomTab("terminal");
+    };
+    window.addEventListener("csotic:open-terminal", handleOpenTerm);
+    return () => window.removeEventListener("csotic:open-terminal", handleOpenTerm);
+  }, []);
 
   return (
     <div className="app-shell" style={{ display: "flex", flexDirection: "column", width: "100vw", height: "100vh", overflow: "hidden" }}>
@@ -815,6 +1290,7 @@ export function AppShell() {
         activeFile={activeTab?.path || null}
         onToggleSidebar={() => setSidebarVisible((v) => !v)}
         onToggleRightPanel={() => setRightPanelVisible((v) => !v)}
+        rightPanelVisible={rightPanelVisible}
         onToggleBottomDock={() => setBottomDockVisible((v) => !v)}
         onOpenTerminal={() => { setBottomDockVisible(true); setActiveBottomTab("terminal"); }}
         onOpenSearch={() => { setSearchInitialMode("files"); setIsSearchOpen(true); }}
@@ -837,9 +1313,11 @@ export function AppShell() {
         onNewFile={handleNewUntitledTab}
         theme={theme}
         onToggleTheme={handleToggleTheme}
+        onOpenWelcomeTab={handleOpenWelcomeTab}
+        onOpenShortcuts={() => setIsShortcutsOpen(true)}
       />
 
-      <div style={{ flex: 1, display: "flex", width: "100%", height: "calc(100vh - 44px)", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", width: "100%", height: "calc(100vh - 44px - 24px)", overflow: "hidden" }}>
         <Sidebar
           visible={sidebarVisible}
           width={sidebarWidth}
@@ -872,6 +1350,13 @@ export function AppShell() {
           onOpenGraph={handleOpenBrainGraph}
           onOpenExtension={handleOpenExtension}
           theme={theme}
+          session={authSession}
+          onOpenAuthModal={() => setIsAuthModalOpen(true)}
+          onOpenSettings={() => {
+            setSettingsInitialTab("accounts");
+            setIsSettingsOpen(true);
+          }}
+          onLogout={handleLogout}
         />
 
         {sidebarVisible && (
@@ -892,6 +1377,12 @@ export function AppShell() {
             onViewChange={handleViewChange}
             activeProject={activeProject}
             activeModel={activeModel}
+            modelsList={modelsList}
+            onSelectModel={handleSelectModel}
+            onOpenSettings={() => {
+              setSettingsInitialTab("keys");
+              setIsSettingsOpen(true);
+            }}
             activeFile={activeTab?.path || null}
             openTabs={openTabs}
             activeTabId={activeTabId}
@@ -929,6 +1420,13 @@ export function AppShell() {
             onDeleteConversation={handleDeleteConversation}
             onOpenFile={handleOpenFile}
             theme={theme}
+            recentProjects={recentProjects}
+            onOpenFolder={handleOpenFolderDialog}
+            onRevealInExplorer={handleRevealInExplorer}
+            onOpenTerminal={() => { setBottomDockVisible(true); setActiveBottomTab("terminal"); }}
+            onNewFile={handleNewUntitledTab}
+            onOpenFilePicker={handleOpenFileDialog}
+            onCursorChangeGlobal={(line, col) => setGlobalCursorPos({ line, col })}
           />
 
           <BottomDock
@@ -938,6 +1436,7 @@ export function AppShell() {
             onTabChange={setActiveBottomTab}
             activeProject={activeProject}
             onOpenFile={handleOpenFile}
+            theme={theme}
           />
         </div>
 
@@ -953,34 +1452,90 @@ export function AppShell() {
           />
         )}
 
-        <RightPanel
-          visible={rightPanelVisible}
-          width={rightPanelWidth}
-          onFileClick={handleOpenFile}
-          activeProject={activeProject}
-        />
+        {rightPanelVisible && (
+          <Suspense fallback={null}>
+            <RightPanel
+              visible={rightPanelVisible}
+              onClose={() => setRightPanelVisible(false)}
+              width={rightPanelWidth}
+              onFileClick={handleOpenFile}
+              activeProject={activeProject}
+              theme={theme}
+            />
+          </Suspense>
+        )}
       </div>
 
-      <SearchModal
-        isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
-        onOpenFile={handleOpenFile}
-        onExecuteCommand={handleExecuteCommand}
-        initialMode={searchInitialMode}
+      <StatusBar
+        line={globalCursorPos.line}
+        col={globalCursorPos.col}
+        language={activeTab?.path ? getLanguageFromPath(activeTab.path) : "PLAINTEXT"}
+        onToggleProblems={() => {
+          setBottomDockVisible(true);
+          setActiveBottomTab("problems");
+        }}
+        onToggleTerminal={() => {
+          setBottomDockVisible(true);
+          setActiveBottomTab("terminal");
+        }}
+        theme={theme}
       />
 
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        activeModel={activeModel}
-        backgroundModel={backgroundModel}
-        modelsList={modelsList}
-        onSelectModel={handleSelectModel}
-        onSelectBackgroundModel={handleSelectBackgroundModel}
-        onRefreshModels={refreshModels}
-        theme={theme}
-        onToggleTheme={handleToggleTheme}
-      />
+      {isSearchOpen && (
+        <Suspense fallback={null}>
+          <SearchModal
+            isOpen={isSearchOpen}
+            onClose={() => setIsSearchOpen(false)}
+            onOpenFile={handleOpenFile}
+            onExecuteCommand={handleExecuteCommand}
+            initialMode={searchInitialMode}
+          />
+        </Suspense>
+      )}
+
+      {isShortcutsOpen && (
+        <Suspense fallback={null}>
+          <ShortcutsModal
+            isOpen={isShortcutsOpen}
+            onClose={() => setIsShortcutsOpen(false)}
+          />
+        </Suspense>
+      )}
+
+      {isSettingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            onClose={() => setIsSettingsOpen(false)}
+            activeModel={activeModel}
+            backgroundModel={backgroundModel}
+            modelsList={modelsList}
+            onSelectModel={handleSelectModel}
+            onSelectBackgroundModel={handleSelectBackgroundModel}
+            onRefreshModels={refreshModels}
+            theme={theme}
+            onToggleTheme={handleToggleTheme}
+            session={authSession}
+            onOpenAuthModal={() => {
+              setIsSettingsOpen(false);
+              setIsAuthModalOpen(true);
+            }}
+            onLogout={handleLogout}
+            initialTab={settingsInitialTab}
+          />
+        </Suspense>
+      )}
+
+      {isAuthModalOpen && (
+        <Suspense fallback={null}>
+          <AuthModal
+            isOpen={isAuthModalOpen}
+            onClose={() => setIsAuthModalOpen(false)}
+            session={authSession}
+            onSessionChange={setAuthSession}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

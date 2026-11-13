@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { ModelMetadata } from "../types/ipc";
+export type { ModelMetadata };
 import { 
   ChevronDown, 
   Search, 
@@ -9,12 +10,96 @@ import {
 } from "lucide-react";
 import { getModelBrandLogo } from "./ModelBrandIcons";
 
-interface ModelSelectorDropdownProps {
-  modelsList: ModelMetadata[];
+export interface ModelSelectorDropdownProps {
+  modelsList?: ModelMetadata[];
   activeModel: string | null;
   onSelectModel: (modelId: string) => void;
   onOpenSettings?: () => void;
+  alignRight?: boolean;
+  compact?: boolean;
+  dropUp?: boolean;
+  triggerStyle?: React.CSSProperties;
+  maxHeight?: number | string;
 }
+
+export const DEFAULT_AI_MODELS: ModelMetadata[] = [
+  {
+    id: "anthropic/claude-3-7-sonnet",
+    name: "Claude 3.7 Sonnet",
+    provider: "anthropic",
+    version: "3.7",
+    context_window: 200000,
+    status: "ready",
+  },
+  {
+    id: "anthropic/claude-3-5-sonnet",
+    name: "Claude 3.5 Sonnet",
+    provider: "anthropic",
+    version: "3.5",
+    context_window: 200000,
+    status: "ready",
+  },
+  {
+    id: "openai/gpt-4o",
+    name: "GPT-4o",
+    provider: "openai",
+    version: "4o",
+    context_window: 128000,
+    status: "ready",
+  },
+  {
+    id: "openai/gpt-4o-mini",
+    name: "GPT-4o Mini",
+    provider: "openai",
+    version: "4o-mini",
+    context_window: 128000,
+    status: "ready",
+    is_free: true,
+  },
+  {
+    id: "google/gemini-2.0-flash",
+    name: "Gemini 2.0 Flash",
+    provider: "gemini",
+    version: "2.0",
+    context_window: 1048576,
+    status: "ready",
+    is_free: true,
+  },
+  {
+    id: "deepseek/deepseek-chat",
+    name: "DeepSeek V3",
+    provider: "deepseek",
+    version: "V3",
+    context_window: 64000,
+    status: "ready",
+  },
+  {
+    id: "deepseek/deepseek-reasoner",
+    name: "DeepSeek R1",
+    provider: "deepseek",
+    version: "R1",
+    context_window: 64000,
+    status: "ready",
+  },
+  {
+    id: "ollama/qwen2.5-coder:7b",
+    name: "Qwen 2.5 Coder 7B (Local)",
+    provider: "ollama",
+    version: "2.5",
+    context_window: 32768,
+    status: "ready",
+    is_free: true,
+  },
+  {
+    id: "ollama/llama3.3",
+    name: "Llama 3.3 70B (Local)",
+    provider: "ollama",
+    version: "3.3",
+    context_window: 131072,
+    status: "ready",
+    is_free: true,
+  },
+];
 
 interface ProviderMeta {
   id: string;
@@ -124,12 +209,24 @@ export function ModelSelectorDropdown({
   activeModel,
   onSelectModel,
   onOpenSettings,
+  alignRight = false,
+  compact = false,
+  dropUp = false,
+  triggerStyle,
+  maxHeight,
 }: ModelSelectorDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeProviderFilter, setActiveProviderFilter] = useState<string>("all");
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const selectedModelRef = useRef<HTMLDivElement>(null);
+
+  // Fallback to rich curated default models if modelsList is empty
+  const effectiveModels = useMemo(() => {
+    if (modelsList && modelsList.length > 0) return modelsList;
+    return DEFAULT_AI_MODELS;
+  }, [modelsList]);
 
   // Close on outside click
   useEffect(() => {
@@ -141,6 +238,9 @@ export function ModelSelectorDropdown({
     if (isOpen) {
       document.addEventListener("mousedown", handleClickOutside);
       setTimeout(() => searchInputRef.current?.focus(), 50);
+      setTimeout(() => {
+        selectedModelRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }, 100);
     }
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
@@ -160,8 +260,8 @@ export function ModelSelectorDropdown({
 
   // Find active model object
   const currentModel = useMemo(() => {
-    return modelsList.find((m) => m.id === activeModel) || null;
-  }, [modelsList, activeModel]);
+    return effectiveModels.find((m) => m.id === activeModel) || null;
+  }, [effectiveModels, activeModel]);
 
   // Clean and format model name
   const formatModelName = (name: string) => {
@@ -180,25 +280,25 @@ export function ModelSelectorDropdown({
 
   // Calculate counts per provider
   const providerCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: modelsList.length, free: 0 };
-    for (const m of modelsList) {
+    const counts: Record<string, number> = { all: effectiveModels.length, free: 0 };
+    for (const m of effectiveModels) {
       const p = m.provider || "other";
       counts[p] = (counts[p] || 0) + 1;
       const isFree = m.provider === "ollama" || m.is_free || m.name.includes("FREE") || m.id.endsWith(":free");
       if (isFree) counts.free = (counts.free || 0) + 1;
     }
     return counts;
-  }, [modelsList]);
+  }, [effectiveModels]);
 
-  // Providers list present in modelsList
+  // Providers list present in effectiveModels
   const availableProviders = useMemo(() => {
-    const provs = new Set(modelsList.map((m) => m.provider));
+    const provs = new Set(effectiveModels.map((m) => m.provider));
     return Object.keys(PROVIDER_METAS).filter((p) => provs.has(p));
-  }, [modelsList]);
+  }, [effectiveModels]);
 
   // Filter models based on search and active provider tab
   const filteredModels = useMemo(() => {
-    let list = modelsList;
+    let list = effectiveModels;
 
     if (activeProviderFilter === "free") {
       list = list.filter((m) => m.provider === "ollama" || m.is_free || m.name.includes("FREE") || m.id.endsWith(":free"));
@@ -265,7 +365,7 @@ export function ModelSelectorDropdown({
     return groups;
   }, [filteredModels]);
 
-  const displayName = currentModel ? formatModelName(currentModel.name) : (activeModel || "Select Model");
+  const displayName = currentModel ? formatModelName(currentModel.name) : (activeModel ? formatModelName(activeModel) : "Select AI Model");
   const isCurrentFree = currentModel ? (currentModel.is_free || currentModel.name.includes("FREE") || currentModel.id.endsWith(":free") || currentModel.provider === "ollama") : false;
   const currentProvider = currentModel?.provider || "ai";
   const currentModelId = currentModel?.id || activeModel || "";
@@ -279,25 +379,30 @@ export function ModelSelectorDropdown({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 7,
-          height: 28,
-          padding: "0 10px 0 8px",
-          background: isOpen ? "rgba(239, 68, 68, 0.14)" : "rgba(255, 255, 255, 0.04)",
-          border: isOpen ? "1px solid rgba(239, 68, 68, 0.45)" : "1px solid rgba(255, 255, 255, 0.08)",
+          gap: compact ? 5 : 7,
+          height: compact ? 24 : 28,
+          padding: compact ? "0 7px 0 6px" : "0 10px 0 8px",
+          background: isOpen 
+            ? "rgba(239, 68, 68, 0.18)" 
+            : (!activeModel ? "rgba(239, 68, 68, 0.12)" : "rgba(255, 255, 255, 0.04)"),
+          border: isOpen 
+            ? "1px solid rgba(239, 68, 68, 0.55)" 
+            : (!activeModel ? "1px solid rgba(239, 68, 68, 0.45)" : "1px solid rgba(255, 255, 255, 0.08)"),
           borderRadius: 6,
-          color: "var(--color-text-primary)",
-          fontSize: "11.5px",
+          color: !activeModel ? "#fca5a5" : "var(--color-text-primary)",
+          fontSize: compact ? "11px" : "11.5px",
           fontWeight: 500,
           cursor: "pointer",
           transition: "all 0.15s ease",
-          maxWidth: 240,
-          boxShadow: isOpen ? "0 0 12px rgba(239, 68, 68, 0.2)" : "none",
+          maxWidth: compact ? 180 : 240,
+          boxShadow: (!activeModel || isOpen) ? "0 0 10px rgba(239, 68, 68, 0.2)" : "none",
+          ...triggerStyle,
         }}
         title={`Active Model: ${displayName} (Key: ${currentMeta?.keyLabel || currentProvider})`}
       >
         {/* Model Brand Logo */}
-        <div style={{ width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          {getModelBrandLogo(currentModelId, displayName, currentProvider, 15)}
+        <div style={{ width: compact ? 13 : 16, height: compact ? 13 : 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {getModelBrandLogo(currentModelId, displayName, currentProvider, compact ? 12 : 15)}
         </div>
 
         {/* Model Label */}
@@ -306,17 +411,17 @@ export function ModelSelectorDropdown({
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
-            maxWidth: 130,
+            maxWidth: compact ? 110 : 130,
             textAlign: "left",
             fontWeight: 600,
-            color: "var(--color-text-primary)",
+            color: !activeModel ? "#fca5a5" : "var(--color-text-primary)",
           }}
         >
           {displayName}
         </span>
 
         {/* Free Tag Pill */}
-        {isCurrentFree && (
+        {isCurrentFree && !compact && (
           <span
             style={{
               fontSize: "9px",
@@ -336,7 +441,7 @@ export function ModelSelectorDropdown({
 
         {/* Rotating Chevron */}
         <ChevronDown
-          size={12}
+          size={11}
           style={{
             opacity: 0.6,
             marginLeft: "auto",
@@ -353,20 +458,22 @@ export function ModelSelectorDropdown({
           className="animate-pop-in"
           style={{
             position: "absolute",
-            top: "calc(100% + 6px)",
-            right: 0,
-            width: 380,
-            maxHeight: 520,
-            background: "rgba(14, 14, 19, 0.98)",
-            backdropFilter: "blur(24px)",
-            WebkitBackdropFilter: "blur(24px)",
-            border: "1px solid rgba(255, 255, 255, 0.12)",
-            borderRadius: 10,
-            boxShadow: "0 24px 60px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05)",
+            top: dropUp ? "auto" : "calc(100% + 6px)",
+            bottom: dropUp ? "calc(100% + 6px)" : "auto",
+            right: alignRight ? 0 : "auto",
+            left: alignRight ? "auto" : 0,
+            width: compact ? 320 : 360,
+            maxWidth: "calc(100vw - 24px)",
+            maxHeight: maxHeight ?? (dropUp ? "min(480px, calc(100vh - 160px))" : "min(520px, calc(100vh - 90px))"),
+            background: "var(--color-modal-bg, #202024)",
+            border: "1px solid var(--color-border-default, #2e2e34)",
+            borderRadius: 8,
+            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.5)",
             zIndex: 9999,
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
+            overscrollBehavior: "contain",
           }}
         >
           {/* Top Bar: Search & Manage Keys Link */}
@@ -378,6 +485,7 @@ export function ModelSelectorDropdown({
               flexDirection: "column",
               gap: 8,
               background: "rgba(255, 255, 255, 0.02)",
+              flexShrink: 0,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -451,11 +559,6 @@ export function ModelSelectorDropdown({
 
             {/* Provider Filter Tabs Bar with Key Badges */}
             <div
-              onWheel={(e) => {
-                if (e.deltaY !== 0) {
-                  e.currentTarget.scrollLeft += e.deltaY;
-                }
-              }}
               style={{
                 display: "flex",
                 flexWrap: "wrap",
@@ -483,7 +586,7 @@ export function ModelSelectorDropdown({
                 }}
               >
                 <span>All</span>
-                <span style={{ fontSize: "9.5px", opacity: 0.7 }}>({modelsList.length})</span>
+                <span style={{ fontSize: "9.5px", opacity: 0.7 }}>({effectiveModels.length})</span>
               </button>
 
               {/* Free tab */}
@@ -597,7 +700,15 @@ export function ModelSelectorDropdown({
           </div>
 
           {/* Model Items Scroll Area */}
-          <div style={{ flex: 1, overflowY: "auto", padding: "6px 6px" }}>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: "auto",
+              padding: "6px 6px",
+              overscrollBehavior: "contain",
+            }}
+          >
             {filteredModels.length === 0 ? (
               <div style={{ padding: "28px 12px", textAlign: "center", color: "var(--color-text-tertiary)", fontSize: "11.5px" }}>
                 No matching models found
@@ -657,6 +768,7 @@ export function ModelSelectorDropdown({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
+                flexShrink: 0,
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "10px", color: "var(--color-text-tertiary)" }}>
@@ -697,6 +809,7 @@ export function ModelSelectorDropdown({
     return (
       <div
         key={m.id}
+        ref={isSelected ? selectedModelRef : undefined}
         onClick={() => {
           onSelectModel(m.id);
           setIsOpen(false);

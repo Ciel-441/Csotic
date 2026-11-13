@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { listen, emit } from "@tauri-apps/api/event";
+import { listen, emit } from "../../services/events";
 import { models, filesystem, agent } from "../../services/ipc";
 import { ProjectInfo } from "../../types/ipc";
 import { getModelBrandLogo } from "../../components/ModelBrandIcons";
@@ -30,6 +30,8 @@ import {
   AlertCircle, 
   RotateCcw, 
 } from "lucide-react";
+import { ModelSelectorDropdown, ModelMetadata, DEFAULT_AI_MODELS } from "../../components/ModelSelectorDropdown";
+import { CustomDialog } from "../../components/GlobalDialog";
 
 interface Message {
   sender: "user" | "agent";
@@ -59,8 +61,21 @@ Your mission is to understand the codebase deeply and deliver clean, robust, pro
    - Explain your thinking clearly and directly.
    - High-level architectural reasoning can be placed inside <thought>...</thought> tags at the very beginning of your response.`;
 
+function isLocalModel(modelId: string | null | undefined): boolean {
+  if (!modelId) return true;
+  const m = modelId.toLowerCase();
+  const isCloud =
+    m.startsWith("openai/") || m.startsWith("gpt-") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("chatgpt") ||
+    m.startsWith("anthropic/") || m.startsWith("claude-") ||
+    m.startsWith("gemini") || m.startsWith("google/") ||
+    m.startsWith("groq/") ||
+    m.startsWith("openrouter/") ||
+    m.startsWith("deepseek");
+  return !isCloud;
+}
+
 function greeting(model: string | null, attachedProjects: string[]): Message {
-  if (!model) return { sender: "agent", text: "Hello! Please select a local or cloud model from the top bar so I can assist you." };
+  if (!model) return { sender: "agent", text: "CHOOSE_MODEL_PROMPT" };
   if (attachedProjects.length > 0) {
     const projectName = attachedProjects[0].split(/[/\\]/).pop();
     return { sender: "agent", text: `Hello! I'm ready to help you with **${projectName}**. You can write code in the editor, ask me to refactor with \`Ctrl+K\`, stage git commits, or ask questions here.` };
@@ -668,9 +683,205 @@ interface AttachedItem {
   content?: string;
 }
 
+function ChooseModelChatCard({
+  onSelectModel,
+  onOpenSettings,
+}: {
+  onSelectModel?: (modelId: string) => void;
+  onOpenSettings?: () => void;
+}) {
+  const quickPicks = [
+    {
+      id: "anthropic/claude-3-7-sonnet",
+      name: "Claude 3.7 Sonnet",
+      provider: "Anthropic",
+      badge: "Flagship",
+      desc: "Top frontier intelligence with hybrid reasoning & coding",
+    },
+    {
+      id: "anthropic/claude-3-5-sonnet",
+      name: "Claude 3.5 Sonnet",
+      provider: "Anthropic",
+      badge: "Precision",
+      desc: "Fast, highly reliable software engineering & debugging",
+    },
+    {
+      id: "openai/gpt-4o",
+      name: "GPT-4o",
+      provider: "OpenAI",
+      badge: "Multimodal",
+      desc: "Flagship versatile coding and general intelligence",
+    },
+    {
+      id: "google/gemini-2.0-flash",
+      name: "Gemini 2.0 Flash",
+      provider: "Google",
+      badge: "1M Context",
+      desc: "Blazing fast response speed & massive context window",
+    },
+    {
+      id: "deepseek/deepseek-reasoner",
+      name: "DeepSeek R1",
+      provider: "DeepSeek",
+      badge: "Reasoning",
+      desc: "Open reasoning model for algorithms and complex logic",
+    },
+    {
+      id: "ollama/qwen2.5-coder:7b",
+      name: "Qwen 2.5 Coder 7B",
+      provider: "Local Ollama",
+      badge: "100% Private",
+      desc: "Runs locally on your device with no data sent to cloud",
+    },
+  ];
+
+  return (
+    <div
+      style={{
+        background: "linear-gradient(160deg, rgba(28, 5, 10, 0.98) 0%, rgba(14, 3, 6, 0.99) 100%)",
+        border: "1px solid rgba(239, 68, 68, 0.35)",
+        borderRadius: "14px",
+        padding: "16px 14px",
+        boxShadow: "0 12px 36px rgba(0, 0, 0, 0.7), 0 0 20px rgba(239, 68, 68, 0.12)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        width: "100%",
+        boxSizing: "border-box",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: "8px",
+            background: "linear-gradient(135deg, rgba(239, 68, 68, 0.35), rgba(185, 28, 28, 0.2))",
+            border: "1px solid rgba(239, 68, 68, 0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#f87171",
+            flexShrink: 0,
+            boxShadow: "0 0 12px rgba(239, 68, 68, 0.25)",
+          }}
+        >
+          <Sparkles size={17} />
+        </div>
+        <div>
+          <div style={{ fontSize: "13.5px", fontWeight: 600, color: "#ffffff", letterSpacing: "-0.01em" }}>
+            Choose an AI Model to Begin
+          </div>
+          <div style={{ fontSize: "11.5px", color: "var(--color-text-secondary)", marginTop: 2, lineHeight: 1.45 }}>
+            Csotic supports local offline models (via Ollama) and cloud engines. Click any model to connect:
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 2 }}>
+        {quickPicks.map((pick) => (
+          <button
+            key={pick.id}
+            onClick={() => onSelectModel?.(pick.id)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "7px 10px",
+              borderRadius: "8px",
+              background: "rgba(255, 255, 255, 0.03)",
+              border: "1px solid rgba(255, 255, 255, 0.07)",
+              cursor: "pointer",
+              transition: "all 0.15s cubic-bezier(0.16, 1, 0.3, 1)",
+              textAlign: "left",
+              gap: 8,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(239, 68, 68, 0.14)";
+              e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.45)";
+              e.currentTarget.style.transform = "translateX(3px)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(255, 255, 255, 0.03)";
+              e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.07)";
+              e.currentTarget.style.transform = "translateX(0)";
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
+              <div style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                {getModelBrandLogo(pick.id, pick.name, "", 16)}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: "12px", fontWeight: 600, color: "#ffffff", whiteSpace: "nowrap" }}>
+                    {pick.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "9.5px",
+                      padding: "1px 5px",
+                      borderRadius: "4px",
+                      background: pick.id.startsWith("ollama") ? "rgba(168, 85, 247, 0.16)" : "rgba(239, 68, 68, 0.15)",
+                      color: pick.id.startsWith("ollama") ? "#c084fc" : "#f87171",
+                      border: `1px solid ${pick.id.startsWith("ollama") ? "rgba(168, 85, 247, 0.3)" : "rgba(239, 68, 68, 0.25)"}`,
+                      fontWeight: 500,
+                    }}
+                  >
+                    {pick.badge}
+                  </span>
+                </div>
+                <div style={{ fontSize: "10.5px", color: "var(--color-text-tertiary)", marginTop: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                  {pick.desc}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 3, color: "#f87171", fontSize: "11px", fontWeight: 600, flexShrink: 0 }}>
+              <span>Select</span>
+              <ChevronRight size={13} />
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 6, borderTop: "1px solid rgba(255, 255, 255, 0.06)" }}>
+        <span style={{ fontSize: "11px", color: "var(--color-text-tertiary)" }}>
+          Need custom endpoint or API keys?
+        </span>
+        {onOpenSettings && (
+          <button
+            onClick={onOpenSettings}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#f87171",
+              fontSize: "11px",
+              fontWeight: 500,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 3,
+              padding: "2px 6px",
+              borderRadius: "4px",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
+            onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
+          >
+            <span>Open AI Settings</span>
+            <ChevronRight size={12} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export interface AiCoderSlidePanelProps {
   activeProject: ProjectInfo | null;
   activeModel: string | null;
+  modelsList?: ModelMetadata[];
+  onSelectModel?: (modelId: string) => void;
+  onOpenSettings?: () => void;
   conversationId: number;
   onConversationTitleChange: (conversationId: number, title: string) => void;
   permissionProfile: "read_only" | "edit" | "developer" | "full_automation";
@@ -692,6 +903,9 @@ export interface AiCoderSlidePanelProps {
 export function AiCoderSlidePanel({
   activeProject,
   activeModel,
+  modelsList,
+  onSelectModel,
+  onOpenSettings,
   conversationId,
   onConversationTitleChange,
   permissionProfile,
@@ -1215,7 +1429,7 @@ export function AiCoderSlidePanel({
     const textToSend = (typeof customPrompt === "string" ? customPrompt : inputText).trim();
     if (!textToSend) return;
     if (!activeModel) {
-      updateMessages(conversationId, (current) => [...current, { sender: "agent", text: "Please select an AI model from the top bar first." }]);
+      updateMessages(conversationId, (current) => [...current, { sender: "agent", text: "CHOOSE_MODEL_PROMPT" }]);
       return;
     }
 
@@ -1243,9 +1457,17 @@ export function AiCoderSlidePanel({
     activeRequest.current = { id: requestId, conversationId };
 
     try {
-      let systemPrompt = CODING_AGENT_PROMPT;
+      const isLocal = isLocalModel(activeModel);
+
+      // Ready cloud API LLMs (Anthropic Claude, OpenAI, Gemini, Groq, DeepSeek, OpenRouter)
+      // are already instruction-tuned; heavy prompt boilerplate wastes tokens and degrades performance.
+      // Custom agent prompt engineering is strictly reserved for local LLMs (Ollama).
+      let systemPrompt = isLocal ? CODING_AGENT_PROMPT : "";
+
+      // Crucial workspace and file context are preserved so both cloud and local models have necessary technical grounding
       if (activeProject) {
-        systemPrompt += `\n\n[Active Project Workspace]\nProject: ${activeProject.name}\nRoot Path: ${activeProject.path}\nPermission Profile: ${permissionProfile}`;
+        const workspaceInfo = `[Active Project Workspace]\nProject: ${activeProject.name}\nRoot Path: ${activeProject.path}\nPermission Profile: ${permissionProfile}`;
+        systemPrompt = systemPrompt ? `${systemPrompt}\n\n${workspaceInfo}` : workspaceInfo;
 
         if (activeFileName && activeFileContent) {
           const cappedActive = activeFileContent.length > 50000 
@@ -1261,7 +1483,8 @@ export function AiCoderSlidePanel({
 
     const docsToSend = attachedItems.filter((a) => a.type !== "image" || (!a.dataUrl && !a.filePath));
     if (docsToSend.length > 0) {
-      systemPrompt += `\n\n[USER ATTACHED DOCUMENTS & FILES (${docsToSend.length})]:`;
+      systemPrompt = systemPrompt ? `${systemPrompt}\n\n` : "";
+      systemPrompt += `[USER ATTACHED DOCUMENTS & FILES (${docsToSend.length})]:`;
       for (const doc of docsToSend) {
         systemPrompt += `\n\n--- Attached File: ${doc.name} ---\n\`\`\`\n${doc.content || ""}\n\`\`\``;
       }
@@ -1284,17 +1507,19 @@ export function AiCoderSlidePanel({
       { sender: "agent", text: "...", exploredFiles: exploredForThisPrompt }
     ]);
 
-    // Inject Global Rules & Custom Directives
-    const globalRules = localStorage.getItem("forge.global_ai_rules");
-    if (globalRules && globalRules.trim()) {
-      systemPrompt += `\n\n[GLOBAL USER DIRECTIVES & RULES]:\n${globalRules.trim()}`;
-    }
+    // System prompt directives are strictly applied to local LLMs
+    if (isLocal) {
+      const globalRules = localStorage.getItem("forge.global_ai_rules");
+      if (globalRules && globalRules.trim()) {
+        systemPrompt += `\n\n[GLOBAL USER DIRECTIVES & RULES]:\n${globalRules.trim()}`;
+      }
 
-    systemPrompt += `\n\n[EXECUTION DIRECTIVES]:
+      systemPrompt += `\n\n[EXECUTION DIRECTIVES]:
 - For implementation and bug fixes: apply minimal, precise, and verified changes.
 - For new features and projects: generate all necessary production-ready components.
 - For questions, reviews, or analysis: provide clear technical explanations.
 - Deliver robust, complete solutions directly without refusal, lecturing, or placeholders.`;
+    }
 
     // Build conversation history so the AI remembers prior context (pruning refusal loops)
     const historyToSend = messages
@@ -1321,9 +1546,10 @@ export function AiCoderSlidePanel({
         };
       });
 
+    let res: any;
     if (activeProject) {
       // Canonical Deterministic Agent Pathway
-      await agent.executeRequest(textToSend, {
+      res = await agent.executeRequest(textToSend, {
         projectPath: activeProject.path,
         modelId: activeModel,
         permissionProfile: permissionProfile || "developer",
@@ -1333,15 +1559,22 @@ export function AiCoderSlidePanel({
       });
     } else {
       // Conversational fallback when no workspace project is opened
-      await models.streamPrompt(activeModel, textToSend, systemPrompt, requestId, imagesToSend, historyToSend);
+      res = await models.streamPrompt(activeModel, textToSend, systemPrompt, requestId, imagesToSend, historyToSend);
     }
-    } catch (err) {
+
+    if (res && !res.success) {
+      throw new Error(res.error?.message || "AI service failed to process request.");
+    }
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
       updateMessages(conversationId, (current) => {
         const next = [...current];
-        next[next.length - 1] = { sender: "agent", text: `⚠️ Error: ${err}`, isError: true, exploredFiles: exploredForThisPrompt };
+        next[next.length - 1] = { sender: "agent", text: `⚠️ Error: ${errMsg}`, isError: true, exploredFiles: exploredForThisPrompt };
         return next;
       });
       setWaiting(false);
+      activeRequest.current = null;
+      void CustomDialog.alert(errMsg, "AI Assistant Error");
     }
   };
 
@@ -1466,15 +1699,14 @@ export function AiCoderSlidePanel({
                 maxWidth: 290,
                 maxHeight: 260,
                 overflowY: "auto",
-                background: "#0e0305",
-                border: "1px solid rgba(239, 68, 68, 0.2)",
+                background: "var(--color-flyout-bg, #202024)",
+                border: "1px solid var(--color-border-default, #2e2e34)",
                 borderRadius: "var(--radius-md)",
-                boxShadow: "0 8px 28px rgba(0, 0, 0, 0.75), 0 0 1px rgba(239, 68, 68, 0.3)",
+                boxShadow: "0 8px 24px rgba(0, 0, 0, 0.5)",
                 padding: "4px",
                 display: "flex",
                 flexDirection: "column",
                 gap: "2px",
-                backdropFilter: "blur(16px)",
               }}
             >
               <div style={{ padding: "4px 8px 3px 8px", fontSize: "10px", fontWeight: 700, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
@@ -1567,55 +1799,16 @@ export function AiCoderSlidePanel({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-          {waiting && (
-            <button
-              onClick={handleStop}
-              title="Terminate AI / Stop Generation"
-              style={{
-                background: "rgba(239, 68, 68, 0.18)",
-                border: "1px solid #ef4444",
-                color: "#ef4444",
-                borderRadius: "var(--radius-sm)",
-                padding: "2px 5px",
-                fontSize: "10px",
-                fontWeight: 600,
-                display: "flex",
-                alignItems: "center",
-                gap: 2,
-                cursor: "pointer",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-              }}
-            >
-              <Square size={8} fill="#ef4444" /> Stop
-            </button>
-          )}
 
-          {activeModel && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 3,
-                padding: "2px 5px",
-                borderRadius: 4,
-                background: "rgba(255, 255, 255, 0.04)",
-                border: "1px solid rgba(255, 255, 255, 0.08)",
-                fontSize: "10px",
-                color: "var(--color-text-secondary)",
-                maxWidth: 95,
-                overflow: "hidden",
-                flexShrink: 1,
-              }}
-              title={activeModel}
-            >
-              <div style={{ width: 11, height: 11, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                {getModelBrandLogo(activeModel, activeModel, "", 11)}
-              </div>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {activeModel.split("/").pop()?.split(":")[0] || activeModel}
-              </span>
-            </div>
+          {onSelectModel && (
+            <ModelSelectorDropdown
+              modelsList={modelsList}
+              activeModel={activeModel}
+              onSelectModel={onSelectModel}
+              onOpenSettings={onOpenSettings}
+              alignRight={true}
+              compact={true}
+            />
           )}
 
           <button
@@ -1683,7 +1876,7 @@ export function AiCoderSlidePanel({
       <div
         ref={chatContainerRef}
         onScroll={handleChatScroll}
-        style={{ flex: 1, overflowY: "auto", padding: "10px", display: "flex", flexDirection: "column", gap: 10 }}
+        style={{ flex: 1, overflowY: "auto", padding: "10px", display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}
       >
         {messages.map((m, idx) => {
           if (isErrorMessage(m)) {
@@ -1715,7 +1908,43 @@ export function AiCoderSlidePanel({
             );
           }
 
-          const { thought, content } = m.sender === "agent" ? parseThoughtAndContent(m.text) : { thought: null, content: m.text };
+          // Check if this is the "Choose an AI Model" onboarding prompt
+          const isChooseModelPrompt = !activeModel && (
+            m.text === "CHOOSE_MODEL_PROMPT" ||
+            m.text.includes("select a local or cloud model") ||
+            m.text.includes("select an AI model") ||
+            (idx === 0 && m.sender === "agent" && messages.length === 1)
+          );
+
+          if (isChooseModelPrompt) {
+            return (
+              <div
+                key={idx}
+                className="chat-message-row"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  width: "100%",
+                  alignSelf: "center",
+                  margin: "4px 0",
+                }}
+              >
+                <ChooseModelChatCard
+                  onSelectModel={onSelectModel}
+                  onOpenSettings={onOpenSettings}
+                />
+              </div>
+            );
+          }
+
+          let rawText = m.text;
+          if (activeModel && (rawText === "CHOOSE_MODEL_PROMPT" || rawText.includes("select a local or cloud model") || rawText.includes("select an AI model"))) {
+            const foundModel = (modelsList && modelsList.length > 0 ? modelsList : DEFAULT_AI_MODELS).find((item) => item.id === activeModel);
+            const modelName = foundModel?.name || activeModel.split("/").pop() || activeModel;
+            rawText = `Hello! I'm ready to assist you using **${modelName}**. What would you like to build or code today? You can write code in the editor, ask me to refactor with \`Ctrl+K\`, stage git commits, or ask questions here.`;
+          }
+
+          const { thought, content } = m.sender === "agent" ? parseThoughtAndContent(rawText) : { thought: null, content: rawText };
           const isCurrentStreaming = waiting && idx === messages.length - 1;
           const fileActions = (activeProject && m.sender === "agent" && content) ? extractFileActions(content, isCurrentStreaming) : [];
           const explored = activeProject ? (m.exploredFiles || []) : [];
@@ -2085,6 +2314,47 @@ export function AiCoderSlidePanel({
           </div>
         )}
 
+        {/* Quick Model Selector Bar above input controls */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 6,
+          padding: "0 2px",
+        }}>
+          {onSelectModel ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <ModelSelectorDropdown
+                modelsList={modelsList}
+                activeModel={activeModel}
+                onSelectModel={onSelectModel}
+                onOpenSettings={onOpenSettings}
+                compact={true}
+                dropUp={true}
+              />
+            </div>
+          ) : <div />}
+
+          {activeModel && (
+            <span style={{
+              fontSize: "10px",
+              color: "var(--color-text-tertiary)",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+            }}>
+              <span style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: isLocalModel(activeModel) ? "#a855f7" : "#4ade80",
+                display: "inline-block",
+              }} />
+              {isLocalModel(activeModel) ? "Local Offline" : "Cloud AI"}
+            </span>
+          )}
+        </div>
+
         <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
           {/* Attachment "+" Cross Launcher */}
           <div ref={attachMenuRef} style={{ position: "relative" }}>
@@ -2121,14 +2391,13 @@ export function AiCoderSlidePanel({
                   background: "#0e0305",
                   border: "1px solid rgba(239, 68, 68, 0.3)",
                   borderRadius: "var(--radius-md)",
-                  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.75), 0 0 10px rgba(239, 68, 68, 0.15)",
+                  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.5)",
                   padding: 6,
                   zIndex: 100,
                   minWidth: 185,
                   display: "flex",
                   flexDirection: "column",
                   gap: 3,
-                  backdropFilter: "blur(16px)",
                 }}
               >
                 <button
@@ -2460,7 +2729,6 @@ function MessageActionMenu({
           alignItems: "center",
           justifyContent: "center",
           padding: 0,
-          backdropFilter: "blur(8px)",
           boxShadow: "0 2px 6px rgba(0, 0, 0, 0.3)",
           transition: "all 0.12s ease",
         }}
@@ -2490,16 +2758,15 @@ function MessageActionMenu({
             marginTop: openUpward ? 0 : 4,
             marginBottom: openUpward ? 4 : 0,
             minWidth: 150,
-            background: "#141419",
-            border: "1px solid rgba(255, 255, 255, 0.16)",
+            background: "var(--color-flyout-bg, #202024)",
+            border: "1px solid var(--color-border-default, #2e2e34)",
             borderRadius: "7px",
             padding: "4px",
-            boxShadow: "0 10px 30px rgba(0, 0, 0, 0.9)",
+            boxShadow: "0 10px 24px rgba(0, 0, 0, 0.6)",
             zIndex: 9999,
             display: "flex",
             flexDirection: "column",
             gap: 2,
-            backdropFilter: "blur(16px)",
           }}
         >
           <button
@@ -2675,7 +2942,6 @@ function MessageErrorCard({
         flexDirection: "column",
         gap: 8,
         boxShadow: "0 4px 16px rgba(0, 0, 0, 0.4)",
-        backdropFilter: "blur(10px)",
         margin: "4px 0",
       }}
     >
